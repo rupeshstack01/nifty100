@@ -41,3 +41,8 @@ htmlcov/
 # Temporary files
 *.tmp
 *.log
+
+# Project-generated data and outputs
+data/
+output/
+results/
