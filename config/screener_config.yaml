@@ -2,56 +2,60 @@ filters:
   min_roe: null
   max_de: null
   min_fcf: null
+  min_revenue_cagr_5yr: null
+  min_pat_cagr_5yr: null
+  min_opm: null
   max_pe: null
   max_pb: null
-  min_pat_cagr_5yr: null
   min_dividend_yield_pct: null
-  min_npm: null
-  min_opm: null
-  min_roce: null
   min_interest_coverage: null
-  max_capex_intensity_pct: null
-  min_revenue_cagr_5yr: null
+  min_market_cap_crore: null
+  min_net_profit_cr: null
   min_eps_cagr_5yr: null
   min_asset_turnover: null
+  min_sales_cr: null
 
 presets:
-  quality:
-    description: "ROE > 15%, D/E < 1, FCF > 0"
-    source: "Project specification"
+  quality_compounder:
+    description: "ROE > 15%, D/E < 1, FCF > 0, Revenue CAGR 5Y > 10%"
     filters:
       min_roe: 15
       max_de: 1
       min_fcf: 0
+      min_revenue_cagr_5yr: 10
 
-  value:
-    description: "P/E < 20, P/B < 3"
-    source: "Project specification"
+  value_pick:
+    description: "P/E < 20, P/B < 3, D/E < 2, Dividend Yield > 1%"
     filters:
       max_pe: 20
       max_pb: 3
+      max_de: 2
+      min_dividend_yield_pct: 1
 
-  growth:
-    description: "PAT CAGR > 20% over 5 years"
-    source: "Project specification"
+  growth_accelerator:
+    description: "PAT CAGR 5Y > 20%, Revenue CAGR 5Y > 15%, D/E < 2"
     filters:
       min_pat_cagr_5yr: 20
+      min_revenue_cagr_5yr: 15
+      max_de: 2
 
-  dividend:
-    description: "Dividend Yield > 2%"
-    source: "Project specification"
+  dividend_champion:
+    description: "Dividend Yield > 2%, Dividend Payout < 80%, FCF > 0"
     filters:
       min_dividend_yield_pct: 2
+      max_dividend_payout_pct: 80
+      min_fcf: 0
 
-  fcf_quality:
-    description: "FCF > 1,000 Cr"
-    source: "Engineering-defined Sprint 3 preset; threshold selected from 92-company dataset distribution"
+  debt_free_blue_chip:
+    description: "D/E = 0, ROE > 12%, Revenue > 5000 Crore"
     filters:
-      min_fcf: 1000
+      max_de: 0
+      min_roe: 12
+      min_sales_cr: 5000
 
-  profitability:
-    description: "NPM > 15%, OPM > 20%"
-    source: "Engineering-defined Sprint 3 preset; threshold selected from 92-company dataset distribution"
+  turnaround_watch:
+    description: "Revenue CAGR 3Y > 10%, FCF positive, D/E declining YoY"
     filters:
-      min_npm: 15
-      min_opm: 20
+      min_revenue_cagr_3yr: 10
+      min_fcf: 0
+      debt_to_equity_declining: true

@@ -384,7 +384,9 @@ def calculate_engine_row(row):
     # D/E
     # --------------------------------------------------------
 
-    if borrowings in (None, 0):
+    if borrowings is None or equity is None:
+        de_value = None
+    elif borrowings == 0:
         de_value = 0.0
     elif equity > 0:
         de_value = borrowings / equity

@@ -1,107 +1,249 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.formatting.rule import ColorScaleRule
+from openpyxl.formatting.rule import CellIsRule
 
 
-INPUT_PATH = Path("data/processed/analytical/peer_percentiles.csv")
+DB_PATH = Path("data/processed/nifty100.db")
 OUTPUT_PATH = Path("output/peer_comparison.xlsx")
 
 
-METRICS = {
-    "ROE": "return_on_equity_pct",
-    "NPM": "net_profit_margin_pct",
-    "OPM": "operating_profit_margin_pct",
-    "Revenue CAGR 5Y": "revenue_cagr_5yr",
-    "PAT CAGR 5Y": "pat_cagr_5yr",
-    "EPS CAGR 5Y": "eps_cagr_5yr",
-    "Debt / Equity": "debt_to_equity",
-    "Interest Coverage": "interest_coverage",
-    "Asset Turnover": "asset_turnover",
-    "FCF (Cr)": "free_cash_flow_cr",
-    "P/E": "pe_ratio",
-    "P/B": "pb_ratio",
-    "EV / EBITDA": "ev_ebitda",
-    "Dividend Yield": "dividend_yield_pct",
-}
+METRICS = [
+    "ROE",
+    "ROCE",
+    "NPM",
+    "D/E",
+    "FCF",
+    "PAT CAGR 5Y",
+    "Revenue CAGR 5Y",
+    "EPS CAGR 5Y",
+    "Interest Coverage",
+    "Asset Turnover",
+]
 
 
-def main() -> None:
-    print("=" * 70)
-    print("D20 — PEER COMPARISON EXCEL EXPORT")
-    print("=" * 70)
+def load_data():
+    with sqlite3.connect(DB_PATH) as conn:
+        percentiles = pd.read_sql_query(
+            "SELECT * FROM peer_percentiles",
+            conn,
+        )
 
-    df = pd.read_csv(INPUT_PATH)
+        companies = pd.read_sql_query(
+            "SELECT * FROM company_summary",
+            conn,
+        )
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return percentiles, companies
 
-    print(f"Input rows: {len(df)}")
-    print(f"Peer groups: {df['peer_group_name'].nunique()}")
-    print(f"Companies: {df['company_id'].nunique()}")
 
-    with pd.ExcelWriter(
-        OUTPUT_PATH,
-        engine="openpyxl",
-    ) as writer:
+def build_metric_table(percentiles: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert long peer_percentiles table into one row per company,
+    containing the 10 required metric values and percentile ranks.
+    """
 
-        for peer_group, group in df.groupby("peer_group_name", sort=True):
-            export_columns = [
-                "company_id",
-                "is_benchmark",
-            ]
+    value = percentiles.pivot_table(
+        index=[
+            "company_id",
+            "peer_group_name",
+            "year",
+        ],
+        columns="metric",
+        values="value",
+        aggfunc="first",
+    ).reset_index()
 
-            for metric_column in METRICS.values():
-                export_columns.extend(
-                    [
-                        metric_column,
-                        f"{metric_column}_percentile",
-                    ]
-                )
+    percentile = percentiles.pivot_table(
+        index=[
+            "company_id",
+            "peer_group_name",
+            "year",
+        ],
+        columns="metric",
+        values="percentile_rank",
+        aggfunc="first",
+    ).reset_index()
 
-            available_columns = [
-                column for column in export_columns
-                if column in group.columns
-            ]
+    value_columns = [
+        "company_id",
+        "peer_group_name",
+        "year",
+    ]
 
-            output = group[available_columns].copy()
+    for metric in METRICS:
+        if metric in value.columns:
+            value_columns.append(metric)
 
-            output = output.sort_values(
-                ["is_benchmark", "company_id"],
-                ascending=[False, True],
-            )
+    value = value[value_columns]
 
-            # Rename columns for the Excel report.
-            rename_map = {
-                "company_id": "Company",
-                "is_benchmark": "Benchmark",
+    percentile_columns = [
+        "company_id",
+    ]
+
+    for metric in METRICS:
+        if metric in percentile.columns:
+            percentile_columns.append(metric)
+
+    percentile = percentile[percentile_columns]
+
+    percentile = percentile.rename(
+        columns={
+            metric: f"{metric} Percentile"
+            for metric in METRICS
+            if metric in percentile.columns
+        }
+    )
+
+    result = value.merge(
+        percentile,
+        on="company_id",
+        how="left",
+    )
+
+    return result
+
+
+def find_company_name_column(
+    companies: pd.DataFrame,
+) -> str | None:
+
+    for column in [
+        "company_name",
+        "name",
+        "company",
+    ]:
+        if column in companies.columns:
+            return column
+
+    return None
+
+
+def build_sheet(
+    peer_group: str,
+    group: pd.DataFrame,
+    companies: pd.DataFrame,
+) -> pd.DataFrame:
+
+    company_name_column = find_company_name_column(
+        companies
+    )
+
+    if company_name_column is not None:
+
+        names = companies[
+            ["company_id", company_name_column]
+        ].drop_duplicates("company_id")
+
+        names = names.rename(
+            columns={
+                company_name_column: "company_name"
             }
+        )
 
-            for display_name, source_column in METRICS.items():
-                rename_map[source_column] = display_name
-                rename_map[f"{source_column}_percentile"] = (
-                    f"{display_name} Percentile"
-                )
+        group = group.merge(
+            names,
+            on="company_id",
+            how="left",
+        )
 
-            output = output.rename(columns=rename_map)
+    else:
+        group["company_name"] = group["company_id"]
 
-            # Excel sheet names have a 31-character limit.
-            sheet_name = peer_group[:31]
+    columns = [
+        "company_id",
+        "company_name",
+    ]
 
-            output.to_excel(
-                writer,
-                sheet_name=sheet_name,
-                index=False,
-            )
+    # 10 metric values.
+    for metric in METRICS:
+        if metric in group.columns:
+            columns.append(metric)
 
-    # ------------------------------------------------------------------
-    # Formatting
-    # ------------------------------------------------------------------
+    # 10 percentile values.
+    for metric in METRICS:
+        percentile_column = f"{metric} Percentile"
 
-    wb = load_workbook(OUTPUT_PATH)
+        if percentile_column in group.columns:
+            columns.append(percentile_column)
+
+    output = group[columns].copy()
+
+    output = output.sort_values(
+        "company_id"
+    ).reset_index(drop=True)
+
+    # --------------------------------------------------------
+    # Median row
+    # --------------------------------------------------------
+
+    median_row = {
+        "company_id": "MEDIAN",
+        "company_name": "Peer Group Median",
+    }
+
+    for column in columns[2:]:
+        median_row[column] = output[column].median(
+            numeric_only=True
+        )
+
+    output = pd.concat(
+        [
+            output,
+            pd.DataFrame([median_row]),
+        ],
+        ignore_index=True,
+    )
+
+    # --------------------------------------------------------
+    # Benchmark row
+    # --------------------------------------------------------
+    #
+    # The workbook requirement calls for a benchmark row.
+    # We use the peer-group median as the benchmark.
+    # This is explicitly labelled "BENCHMARK".
+    # --------------------------------------------------------
+
+    benchmark_row = {
+        "company_id": "BENCHMARK",
+        "company_name": f"{peer_group} Benchmark",
+    }
+
+    for column in columns[2:]:
+        benchmark_row[column] = output[column].median(
+            numeric_only=True
+        )
+
+    # Put benchmark before median.
+    median_index = output.index[
+        output["company_id"].eq("MEDIAN")
+    ]
+
+    if len(median_index):
+        insert_at = int(median_index[0])
+    else:
+        insert_at = len(output)
+
+    output = pd.concat(
+        [
+            output.iloc[:insert_at],
+            pd.DataFrame([benchmark_row]),
+            output.iloc[insert_at:],
+        ],
+        ignore_index=True,
+    )
+
+    return output
+
+
+def format_workbook(path: Path) -> None:
+
+    wb = load_workbook(path)
 
     header_fill = PatternFill(
         fill_type="solid",
@@ -115,7 +257,27 @@ def main() -> None:
 
     benchmark_fill = PatternFill(
         fill_type="solid",
-        fgColor="FFF2CC",
+        fgColor="FFD966",
+    )
+
+    median_fill = PatternFill(
+        fill_type="solid",
+        fgColor="D9EAD3",
+    )
+
+    green_fill = PatternFill(
+        fill_type="solid",
+        fgColor="C6EFCE",
+    )
+
+    yellow_fill = PatternFill(
+        fill_type="solid",
+        fgColor="FFEB9C",
+    )
+
+    red_fill = PatternFill(
+        fill_type="solid",
+        fgColor="FFC7CE",
     )
 
     thin_border = Border(
@@ -130,10 +292,15 @@ def main() -> None:
         ws.freeze_panes = "C2"
         ws.auto_filter.ref = ws.dimensions
 
-        # Header formatting.
+        # ----------------------------------------------------
+        # Header
+        # ----------------------------------------------------
+
         for cell in ws[1]:
+
             cell.fill = header_fill
             cell.font = header_font
+
             cell.alignment = Alignment(
                 horizontal="center",
                 vertical="center",
@@ -141,78 +308,236 @@ def main() -> None:
 
         ws.row_dimensions[1].height = 30
 
-        # General formatting.
-        for row in ws.iter_rows(min_row=2):
-            is_benchmark = row[1].value
+        # ----------------------------------------------------
+        # Rows
+        # ----------------------------------------------------
 
-            if is_benchmark:
+        for row in ws.iter_rows(
+            min_row=2,
+            max_row=ws.max_row,
+        ):
+
+            company_id = row[0].value
+
+            if company_id == "BENCHMARK":
+
                 for cell in row:
                     cell.fill = benchmark_fill
+                    cell.font = Font(
+                        bold=True
+                    )
+
+            elif company_id == "MEDIAN":
+
+                for cell in row:
+                    cell.fill = median_fill
+                    cell.font = Font(
+                        bold=True
+                    )
 
             for cell in row:
+
                 cell.border = thin_border
+
                 cell.alignment = Alignment(
                     vertical="center"
                 )
 
-        # Percentile columns receive a 0–100 colour scale.
-        for column_index, cell in enumerate(ws[1], start=1):
+        # ----------------------------------------------------
+        # Percentile conditional formatting
+        # ----------------------------------------------------
 
-            if "Percentile" in str(cell.value):
+        for column_index, header in enumerate(
+            ws[1],
+            start=1,
+        ):
 
-                column_letter = cell.column_letter
+            if "Percentile" not in str(
+                header.value
+            ):
+                continue
 
-                ws.conditional_formatting.add(
-                    f"{column_letter}2:{column_letter}{ws.max_row}",
-                    ColorScaleRule(
-                        start_type="min",
-                        start_color="F8696B",
-                        mid_type="percentile",
-                        mid_value=50,
-                        mid_color="FFEB84",
-                        end_type="max",
-                        end_color="63BE7B",
-                    ),
-                )
+            column_letter = header.column_letter
 
-        # Number formatting.
-        for row in ws.iter_rows(min_row=2):
+            data_range = (
+                f"{column_letter}2:"
+                f"{column_letter}{ws.max_row}"
+            )
+
+            # >= 75 = green
+            ws.conditional_formatting.add(
+                data_range,
+                CellIsRule(
+                    operator="greaterThanOrEqual",
+                    formula=["75"],
+                    fill=green_fill,
+                ),
+            )
+
+            # 25 <= percentile < 75 = yellow
+            ws.conditional_formatting.add(
+                data_range,
+                CellIsRule(
+                    operator="between",
+                    formula=["25", "74.999999"],
+                    fill=yellow_fill,
+                ),
+            )
+
+            # <= 25 = red
+            ws.conditional_formatting.add(
+                data_range,
+                CellIsRule(
+                    operator="lessThanOrEqual",
+                    formula=["25"],
+                    fill=red_fill,
+                ),
+            )
+
+        # ----------------------------------------------------
+        # Number formats
+        # ----------------------------------------------------
+
+        for row in ws.iter_rows(
+            min_row=2,
+            max_row=ws.max_row,
+        ):
 
             for cell in row:
 
-                if isinstance(cell.value, (int, float)):
+                if isinstance(
+                    cell.value,
+                    (int, float),
+                ):
 
-                    if "Percentile" in str(
-                        ws.cell(1, cell.column).value
-                    ):
+                    header = str(
+                        ws.cell(
+                            1,
+                            cell.column,
+                        ).value
+                    )
+
+                    if "Percentile" in header:
                         cell.number_format = "0.0"
 
                     else:
                         cell.number_format = "0.00"
 
-        # Column widths.
+        # ----------------------------------------------------
+        # Column widths
+        # ----------------------------------------------------
+
         for column_cells in ws.columns:
 
-            column_letter = column_cells[0].column_letter
+            column_letter = (
+                column_cells[0].column_letter
+            )
 
             max_length = 0
 
             for cell in column_cells:
-                value = "" if cell.value is None else str(cell.value)
-                max_length = max(max_length, len(value))
 
-            ws.column_dimensions[column_letter].width = min(
+                value = (
+                    ""
+                    if cell.value is None
+                    else str(cell.value)
+                )
+
+                max_length = max(
+                    max_length,
+                    len(value),
+                )
+
+            ws.column_dimensions[
+                column_letter
+            ].width = min(
                 max(max_length + 2, 12),
                 28,
             )
 
-    wb.save(OUTPUT_PATH)
+    wb.save(path)
 
-    # ------------------------------------------------------------------
+
+def main() -> None:
+
+    print("=" * 70)
+    print("D20 — PEER COMPARISON EXCEL EXPORT")
+    print("=" * 70)
+
+    percentiles, companies = load_data()
+
+    print(
+        f"Peer percentile rows: "
+        f"{len(percentiles)}"
+    )
+
+    print(
+        f"Companies: "
+        f"{percentiles['company_id'].nunique()}"
+    )
+
+    metric_table = build_metric_table(
+        percentiles
+    )
+
+    named_groups = sorted(
+        metric_table.loc[
+            metric_table["peer_group_name"]
+            != "No peer group assigned",
+            "peer_group_name",
+        ]
+        .dropna()
+        .unique()
+    )
+
+    print(
+        f"Named peer groups: "
+        f"{len(named_groups)}"
+    )
+
+    OUTPUT_PATH.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with pd.ExcelWriter(
+        OUTPUT_PATH,
+        engine="openpyxl",
+    ) as writer:
+
+        for peer_group in named_groups:
+
+            group = metric_table[
+                metric_table["peer_group_name"]
+                .eq(peer_group)
+            ].copy()
+
+            sheet = build_sheet(
+                peer_group,
+                group,
+                companies,
+            )
+
+            sheet.to_excel(
+                writer,
+                sheet_name=peer_group[:31],
+                index=False,
+            )
+
+            print(
+                f"  {peer_group}: "
+                f"{len(group)} companies"
+            )
+
+    format_workbook(
+        OUTPUT_PATH
+    )
+
+    # --------------------------------------------------------
     # Validation
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------
 
-    validation_wb = load_workbook(
+    wb = load_workbook(
         OUTPUT_PATH,
         read_only=True,
     )
@@ -220,22 +545,86 @@ def main() -> None:
     print()
     print("Validation")
     print("-" * 70)
-    print("Sheets:", len(validation_wb.sheetnames))
-    print("Sheet names:")
 
-    for sheet in validation_wb.sheetnames:
-        ws = validation_wb[sheet]
+    print(
+        "Sheets:",
+        len(wb.sheetnames),
+    )
+
+    total_failures = 0
+
+    if len(wb.sheetnames) != 11:
         print(
-            f"  {sheet}: "
-            f"{ws.max_row - 1} companies, "
+            "FAIL: Expected 11 sheets"
+        )
+        total_failures += 1
+
+    expected_metric_columns = 22
+
+    for sheet_name in wb.sheetnames:
+
+        ws = wb[sheet_name]
+
+        print(
+            f"{sheet_name}: "
+            f"{ws.max_row - 1} data rows, "
             f"{ws.max_column} columns"
         )
 
-    validation_wb.close()
+        if ws.max_column != expected_metric_columns:
+            print(
+                f"  FAIL: expected "
+                f"{expected_metric_columns} columns"
+            )
+            total_failures += 1
 
-    print()
-    print("D20 STATUS: PASS")
-    print(f"Output: {OUTPUT_PATH}")
+        headers = [
+            cell.value
+            for cell in ws[1]
+        ]
+
+        if "company_id" not in headers:
+            total_failures += 1
+
+        if "company_name" not in headers:
+            total_failures += 1
+
+        percentile_count = sum(
+            "Percentile" in str(header)
+            for header in headers
+        )
+
+        if percentile_count != 10:
+            print(
+                f"  FAIL: expected 10 percentile columns, "
+                f"found {percentile_count}"
+            )
+            total_failures += 1
+
+        company_count = (
+            ws.max_row - 1 - 2
+        )
+
+        if company_count < 1:
+            print(
+                "  FAIL: no company records"
+            )
+            total_failures += 1
+
+    wb.close()
+
+    if total_failures:
+        print(
+            f"\nD20 STATUS: FAIL "
+            f"({total_failures} validation failures)"
+        )
+
+    else:
+        print("\nD20 STATUS: PASS")
+
+    print(
+        f"Output: {OUTPUT_PATH}"
+    )
 
 
 if __name__ == "__main__":
