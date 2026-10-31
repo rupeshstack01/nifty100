@@ -66,21 +66,28 @@ def cagr(start_value, end_value, years):
     return None, "INSUFFICIENT"
 
 
-def percentile_score(series, inverse=False):
+def percentile_score(series, inverse=False, eligible=None):
     """
     Convert a KPI into a 0-100 percentile score.
+
+    Only eligible rows participate in peer ranking.
+    Ineligible rows retain NaN scores.
     """
     result = pd.Series(np.nan, index=series.index, dtype=float)
 
     valid = series.notna()
 
+    if eligible is not None:
+        eligible = eligible.reindex(series.index).fillna(False).astype(bool)
+        valid = valid & eligible
+
     if valid.sum() == 0:
         return result
 
-    ranked = series[valid].rank(pct=True) * 100
-
-    if inverse:
-        ranked = 100 - ranked
+    ranked = series[valid].rank(
+        pct=True,
+        ascending=not inverse,
+    ) * 100
 
     result.loc[valid] = ranked
 
@@ -100,10 +107,17 @@ def sign(value):
     return "0"
 
 
+
 def capital_allocation(cfo, cfi, cff, cfo_pat_ratio=None):
     """
-    Classify annual capital allocation using CFO/CFI/CFF signs.
+    Classify capital allocation only when all three cash-flow
+    inputs are available and trustworthy.
     """
+    if cfo is None or cfi is None or cff is None:
+        return "Insufficient Data"
+
+    if any(pd.isna(value) for value in (cfo, cfi, cff)):
+        return "Insufficient Data"
 
     pattern = (
         sign(cfo),
@@ -112,8 +126,9 @@ def capital_allocation(cfo, cfi, cff, cfo_pat_ratio=None):
     )
 
     if pattern == ("+", "-", "-"):
-        if cfo_pat_ratio is not None and cfo_pat_ratio > 1:
-            return "Shareholder Returns"
+        if cfo_pat_ratio is not None and not pd.isna(cfo_pat_ratio):
+            if cfo_pat_ratio > 1:
+                return "Shareholder Returns"
         return "Reinvestor"
 
     if pattern == ("+", "+", "-"):
@@ -250,38 +265,47 @@ ratios["broad_sector"] = ratios["broad_sector"].fillna(
 )
 
 
+
 # ============================================================
-# JOIN SAFE FINANCIAL PANEL
+# JOIN FINANCIAL PANEL WITH DATA-QUALITY FLAGS
 # ============================================================
 
 panel_lookup = panel.copy()
 
-panel_lookup = panel_lookup.drop_duplicates(
-    ["company_id", "year"]
-)
+# The panel should contain exactly one row per company-year.
+if panel_lookup.duplicated(["company_id", "year"]).any():
+    raise ValueError(
+        "financial_panel.csv contains duplicate company-year keys."
+    )
 
-# Rename only fields that may overlap with ratio-source columns.
 panel_lookup = panel_lookup.rename(
     columns={
-        "operating_profit": "_panel_operating_profit",
-        "other_income": "_panel_other_income",
-        "interest": "_panel_interest",
-        "equity_capital": "_panel_equity_capital",
-        "reserves": "_panel_reserves",
-        "borrowings": "_panel_borrowings",
-        "investments": "_panel_investments",
-        "total_assets": "_panel_total_assets",
-        "cash_from_operating_activity": "_panel_cfo",
-        "cash_from_investing_activity": "_panel_cfi",
-        "cash_from_financing_activity": "_panel_cff",
-        "sales": "_panel_sales",
-        "net_profit": "_panel_net_profit",
+        "profitandloss_sales": "_panel_sales",
+        "profitandloss_net_profit": "_panel_net_profit",
+        "profitandloss_operating_profit": "_panel_operating_profit",
+        "profitandloss_other_income": "_panel_other_income",
+        "profitandloss_interest": "_panel_interest",
+        "balancesheet_equity_capital": "_panel_equity_capital",
+        "balancesheet_reserves": "_panel_reserves",
+        "balancesheet_borrowings": "_panel_borrowings",
+        "balancesheet_investments": "_panel_investments",
+        "balancesheet_total_assets": "_panel_total_assets",
+        "cashflow_operating_activity": "_panel_cfo",
+        "cashflow_investing_activity": "_panel_cfi",
+        "cashflow_financing_activity": "_panel_cff",
+        "cashflow_net_cash_flow": "_panel_net_cash_flow",
+        "profitandloss_ambiguous": "_pl_ambiguous",
+        "balancesheet_ambiguous": "_bs_ambiguous",
+        "cashflow_ambiguous": "_cf_ambiguous",
+        "financial_ratios_ambiguous": "_ratios_ambiguous",
     }
 )
 
 panel_fields = [
     "company_id",
     "year",
+    "_panel_sales",
+    "_panel_net_profit",
     "_panel_operating_profit",
     "_panel_other_income",
     "_panel_interest",
@@ -293,19 +317,73 @@ panel_fields = [
     "_panel_cfo",
     "_panel_cfi",
     "_panel_cff",
-    "_panel_sales",
-    "_panel_net_profit",
+    "_panel_net_cash_flow",
+    "_pl_ambiguous",
+    "_bs_ambiguous",
+    "_cf_ambiguous",
+    "_ratios_ambiguous",
 ]
 
 panel_fields = [
-    c for c in panel_fields
-    if c in panel_lookup.columns
+    column for column in panel_fields
+    if column in panel_lookup.columns
 ]
 
 ratios = ratios.merge(
     panel_lookup[panel_fields],
     on=["company_id", "year"],
     how="left",
+    validate="many_to_one",
+)
+
+# Expose the data-quality flags in the output.
+# Use the authoritative panel review file, including missing records.
+review_path = ANALYTICAL / "financial_panel_review.csv"
+
+if not review_path.exists():
+    raise FileNotFoundError(
+        f"Required panel review file is missing: {review_path}"
+    )
+
+review = pd.read_csv(review_path)
+
+required_review_columns = [
+    "company_id",
+    "year",
+    "needs_review",
+]
+
+missing_review_columns = [
+    column for column in required_review_columns
+    if column not in review.columns
+]
+
+if missing_review_columns:
+    raise ValueError(
+        f"Panel review file is missing columns: {missing_review_columns}"
+    )
+
+if review.duplicated(["company_id", "year"]).any():
+    raise ValueError(
+        "Panel review file has duplicate company-year keys."
+    )
+
+review["needs_review"] = (
+    review["needs_review"].fillna(True).astype(bool)
+)
+
+ratios = ratios.merge(
+    review[["company_id", "year", "needs_review"]].rename(
+        columns={"needs_review": "_authoritative_needs_review"}
+    ),
+    on=["company_id", "year"],
+    how="left",
+    validate="many_to_one",
+)
+
+# Unmatched keys are conservatively marked for review.
+ratios["panel_needs_review"] = (
+    ratios["_authoritative_needs_review"].fillna(True).astype(bool)
 )
 
 
@@ -317,150 +395,153 @@ print("\nCalculating ratio KPIs...")
 
 
 def calculate_engine_row(row):
-    sales = safe_num(row.get("_panel_sales"))
-    net_profit = safe_num(row.get("_panel_net_profit"))
-    operating_profit = safe_num(row.get("_panel_operating_profit"))
-    other_income = safe_num(row.get("_panel_other_income"))
-    interest = safe_num(row.get("_panel_interest"))
-    equity_capital = safe_num(row.get("_panel_equity_capital"))
-    reserves = safe_num(row.get("_panel_reserves"))
-    borrowings = safe_num(row.get("_panel_borrowings"))
-    investments = safe_num(row.get("_panel_investments"))
-    total_assets = safe_num(row.get("_panel_total_assets"))
+    if bool(row.get("panel_needs_review", True)):
+        return pd.Series({
+            "engine_net_profit_margin_pct": np.nan,
+            "engine_operating_profit_margin_pct": np.nan,
+            "engine_return_on_equity_pct": np.nan,
+            "engine_roce_pct": np.nan,
+            "engine_roa_pct": np.nan,
+            "engine_debt_to_equity": np.nan,
+            "high_leverage_flag": False,
+            "engine_interest_coverage": np.nan,
+            "icr_label": None,
+            "icr_warning": None,
+            "engine_net_debt_cr": np.nan,
+            "engine_asset_turnover": np.nan,
+        })
 
-    equity = (equity_capital or 0) + (reserves or 0)
+    pl_ambiguous = bool(row.get("_pl_ambiguous", True))
+    bs_ambiguous = bool(row.get("_bs_ambiguous", True))
+    ratio_ambiguous = bool(row.get("_ratios_ambiguous", True))
 
-    # --------------------------------------------------------
-    # NPM
-    # --------------------------------------------------------
+    # P&L inputs are only trusted when that source is unambiguous.
+    sales = safe_num(row.get("_panel_sales")) if not pl_ambiguous else None
+    net_profit = safe_num(row.get("_panel_net_profit")) if not pl_ambiguous else None
+    operating_profit = (
+        safe_num(row.get("_panel_operating_profit"))
+        if not pl_ambiguous else None
+    )
+    other_income = (
+        safe_num(row.get("_panel_other_income"))
+        if not pl_ambiguous else None
+    )
+    interest = safe_num(row.get("_panel_interest")) if not pl_ambiguous else None
 
-    if sales not in (None, 0) and net_profit is not None:
-        npm = net_profit / sales * 100
-    else:
-        npm = safe_num(row.get("net_profit_margin_pct"))
-
-    # --------------------------------------------------------
-    # OPM
-    # --------------------------------------------------------
-
-    if sales not in (None, 0) and operating_profit is not None:
-        opm = operating_profit / sales * 100
-    else:
-        opm = safe_num(row.get("operating_profit_margin_pct"))
-
-    # --------------------------------------------------------
-    # ROE
-    # --------------------------------------------------------
-
-    if equity > 0 and net_profit is not None:
-        roe_value = net_profit / equity * 100
-    else:
-        roe_value = safe_num(row.get("return_on_equity_pct"))
-
-    # --------------------------------------------------------
-    # ROCE
-    # --------------------------------------------------------
-
-    capital_employed = (
-        equity
-        + (borrowings or 0)
+    # Balance-sheet inputs are only trusted when that source is unambiguous.
+    equity_capital = (
+        safe_num(row.get("_panel_equity_capital"))
+        if not bs_ambiguous else None
+    )
+    reserves = safe_num(row.get("_panel_reserves")) if not bs_ambiguous else None
+    borrowings = (
+        safe_num(row.get("_panel_borrowings"))
+        if not bs_ambiguous else None
+    )
+    investments = (
+        safe_num(row.get("_panel_investments"))
+        if not bs_ambiguous else None
+    )
+    total_assets = (
+        safe_num(row.get("_panel_total_assets"))
+        if not bs_ambiguous else None
     )
 
-    if capital_employed > 0 and operating_profit is not None:
-        roce_value = operating_profit / capital_employed * 100
-    else:
-        roce_value = None
+    # Require both equity components; do not assume missing means zero.
+    equity = (
+        equity_capital + reserves
+        if equity_capital is not None and reserves is not None
+        else None
+    )
 
-    # --------------------------------------------------------
-    # ROA
-    # --------------------------------------------------------
+    npm = (
+        net_profit / sales * 100
+        if sales not in (None, 0) and net_profit is not None
+        else None
+    )
+    opm = (
+        operating_profit / sales * 100
+        if sales not in (None, 0) and operating_profit is not None
+        else None
+    )
+    roe_value = (
+        net_profit / equity * 100
+        if net_profit is not None and equity not in (None, 0) and equity > 0
+        else None
+    )
 
-    if total_assets not in (None, 0) and net_profit is not None:
-        roa_value = net_profit / total_assets * 100
-    else:
-        roa_value = None
+    capital_employed = (
+        equity + borrowings
+        if equity is not None and borrowings is not None
+        else None
+    )
+    roce_value = (
+        operating_profit / capital_employed * 100
+        if operating_profit is not None
+        and capital_employed not in (None, 0)
+        and capital_employed > 0
+        else None
+    )
+    roa_value = (
+        net_profit / total_assets * 100
+        if net_profit is not None and total_assets not in (None, 0)
+        else None
+    )
 
-    # --------------------------------------------------------
-    # D/E
-    # --------------------------------------------------------
-
-    if borrowings is None or equity is None:
+    if borrowings is None or equity is None or equity <= 0:
         de_value = None
-    elif borrowings == 0:
-        de_value = 0.0
-    elif equity > 0:
+    else:
         de_value = borrowings / equity
-    else:
-        de_value = None
-
-    # --------------------------------------------------------
-    # HIGH LEVERAGE
-    # --------------------------------------------------------
 
     sector = row.get("broad_sector")
-
     high_leverage = (
         de_value is not None
         and de_value > 5
         and sector != "Financials"
     )
 
-    # --------------------------------------------------------
-    # INTEREST COVERAGE
-    # --------------------------------------------------------
 
-    if interest in (None, 0):
+
+    if (
+        interest is None
+        or interest <= 0
+        or operating_profit is None
+        or other_income is None
+    ):
         icr_value = None
-        icr_label_value = "Debt Free"
-        icr_warning_value = False
+        icr_label_value = None
+        icr_warning_value = None
     else:
-        icr_value = (
-            (operating_profit or 0)
-            + (other_income or 0)
-        ) / interest
-
+        icr_value = (operating_profit + other_income) / interest
         icr_label_value = None
         icr_warning_value = icr_value < 1.5
 
-    # --------------------------------------------------------
-    # NET DEBT
-    # --------------------------------------------------------
-
-    if borrowings is None and investments is None:
-        net_debt_value = None
-    else:
-        net_debt_value = (
-            (borrowings or 0)
-            - (investments or 0)
-        )
-
-    # --------------------------------------------------------
-    # ASSET TURNOVER
-    # --------------------------------------------------------
-
-    if total_assets not in (None, 0) and sales is not None:
-        asset_turnover_value = sales / total_assets
-    else:
-        asset_turnover_value = safe_num(
-            row.get("asset_turnover")
-        )
-
-    return pd.Series(
-        {
-            "engine_net_profit_margin_pct": npm,
-            "engine_operating_profit_margin_pct": opm,
-            "engine_return_on_equity_pct": roe_value,
-            "engine_roce_pct": roce_value,
-            "engine_roa_pct": roa_value,
-            "engine_debt_to_equity": de_value,
-            "high_leverage_flag": high_leverage,
-            "engine_interest_coverage": icr_value,
-            "icr_label": icr_label_value,
-            "icr_warning": icr_warning_value,
-            "engine_net_debt_cr": net_debt_value,
-            "engine_asset_turnover": asset_turnover_value,
-        }
+    net_debt_value = (
+        borrowings - investments
+        if borrowings is not None and investments is not None
+        else None
     )
+
+    asset_turnover_value = (
+        sales / total_assets
+        if sales is not None and total_assets not in (None, 0)
+        else None
+    )
+
+    return pd.Series({
+        "engine_net_profit_margin_pct": npm,
+        "engine_operating_profit_margin_pct": opm,
+        "engine_return_on_equity_pct": roe_value,
+        "engine_roce_pct": roce_value,
+        "engine_roa_pct": roa_value,
+        "engine_debt_to_equity": de_value,
+        "high_leverage_flag": high_leverage,
+        "engine_interest_coverage": icr_value,
+        "icr_label": icr_label_value,
+        "icr_warning": icr_warning_value,
+        "engine_net_debt_cr": net_debt_value,
+        "engine_asset_turnover": asset_turnover_value,
+    })
 
 
 engine_values = ratios.apply(
@@ -481,95 +562,77 @@ ratios = pd.concat(
 print("Calculating cash-flow KPIs...")
 
 
-def get_cf_value(row, field):
-    value = row.get(field)
-    return safe_num(value)
+def trusted_num(row, field, ambiguous_flag=None):
+    """Return a numeric value only when its source is trustworthy."""
+    if ambiguous_flag and bool(row.get(ambiguous_flag, True)):
+        return None
+
+    return safe_num(row.get(field))
 
 
-ratios["cash_from_operations_cr"] = ratios[
-    "cash_from_operations_cr"
-].combine_first(
-    ratios["_panel_cfo"]
-    if "_panel_cfo" in ratios.columns
-    else pd.Series(index=ratios.index, dtype=float)
+# Trust panel cash-flow values only when the cash-flow source
+# is unambiguous. Never infer FCF or capex from total investing cash flow.
+ratios["cash_from_operations_cr"] = ratios.apply(
+    lambda r: trusted_num(r, "_panel_cfo", "_cf_ambiguous"),
+    axis=1,
 )
 
+# Preserve source-provided ratio-table values only when that source
+# is unambiguous. Missing values remain missing.
+if "_ratios_ambiguous" in ratios.columns:
+    trusted_ratio_source = ~ratios["_ratios_ambiguous"].fillna(True).astype(bool)
+else:
+    trusted_ratio_source = pd.Series(False, index=ratios.index)
 
-# Use existing source FCF first, then calculate where possible.
-ratios["free_cash_flow_cr"] = ratios[
-    "free_cash_flow_cr"
-].combine_first(
-    ratios.apply(
-        lambda r: (
-            safe_num(r.get("_panel_cfo") or 0)
-            + safe_num(r.get("_panel_cfi") or 0)
-            if (
-                safe_num(r.get("_panel_cfo")) is not None
-                or safe_num(r.get("_panel_cfi")) is not None
-            )
-            else np.nan
-        ),
-        axis=1,
-    )
+ratios["free_cash_flow_cr"] = ratios["free_cash_flow_cr"].where(
+    trusted_ratio_source
 )
 
-
-ratios["capex_cr"] = ratios[
-    "capex_cr"
-].combine_first(
-    ratios.apply(
-        lambda r: (
-            abs(safe_num(r.get("_panel_cfi")))
-            if safe_num(r.get("_panel_cfi")) is not None
-            else np.nan
-        ),
-        axis=1,
-    )
+ratios["capex_cr"] = ratios["capex_cr"].where(
+    trusted_ratio_source
 )
 
-
+# Capex intensity requires a trusted capex value and trusted revenue.
 ratios["capex_intensity_pct"] = ratios.apply(
     lambda r: (
-        abs(
-            safe_num(r.get("_panel_cfi"))
-            or 0
-        )
-        / safe_num(r.get("_panel_sales"))
+        safe_num(r.get("capex_cr"))
+        / trusted_num(r, "_panel_sales", "_pl_ambiguous")
         * 100
         if (
-            safe_num(r.get("_panel_sales"))
+            safe_num(r.get("capex_cr")) is not None
+            and trusted_num(r, "_panel_sales", "_pl_ambiguous")
             not in (None, 0)
-            and safe_num(r.get("_panel_cfi")) is not None
         )
         else np.nan
     ),
     axis=1,
 )
 
-
+# FCF conversion requires trusted FCF and operating profit.
 ratios["fcf_conversion_pct"] = ratios.apply(
     lambda r: (
         safe_num(r.get("free_cash_flow_cr"))
-        / safe_num(r.get("_panel_operating_profit"))
+        / trusted_num(r, "_panel_operating_profit", "_pl_ambiguous")
         * 100
         if (
             safe_num(r.get("free_cash_flow_cr")) is not None
-            and safe_num(r.get("_panel_operating_profit"))
-            not in (None, 0)
+            and trusted_num(
+                r, "_panel_operating_profit", "_pl_ambiguous"
+            ) not in (None, 0)
         )
         else np.nan
     ),
     axis=1,
 )
 
-
+# CFO/PAT requires trusted operating cash flow and net profit.
 ratios["cfo_pat_ratio"] = ratios.apply(
     lambda r: (
-        safe_num(r.get("_panel_cfo"))
-        / safe_num(r.get("_panel_net_profit"))
+        trusted_num(r, "_panel_cfo", "_cf_ambiguous")
+        / trusted_num(r, "_panel_net_profit", "_pl_ambiguous")
         if (
-            safe_num(r.get("_panel_cfo")) is not None
-            and safe_num(r.get("_panel_net_profit"))
+            trusted_num(r, "_panel_cfo", "_cf_ambiguous") is not None
+            and trusted_num(r, "_panel_net_profit", "_pl_ambiguous")
             not in (None, 0)
         )
         else np.nan
@@ -588,10 +651,7 @@ def cfo_quality(value):
     return "Accrual Risk"
 
 
-ratios["cfo_quality_label"] = ratios[
-    "cfo_pat_ratio"
-].apply(cfo_quality)
-
+ratios["cfo_quality_label"] = ratios["cfo_pat_ratio"].apply(cfo_quality)
 
 # ============================================================
 # CAPITAL ALLOCATION
@@ -599,9 +659,15 @@ ratios["cfo_quality_label"] = ratios[
 
 ratios["capital_allocation"] = ratios.apply(
     lambda r: capital_allocation(
-        safe_num(r.get("_panel_cfo")),
-        safe_num(r.get("_panel_cfi")),
-        safe_num(r.get("_panel_cff")),
+        safe_num(r.get("_panel_cfo"))
+        if not bool(r.get("_cf_ambiguous", True))
+        else None,
+        safe_num(r.get("_panel_cfi"))
+        if not bool(r.get("_cf_ambiguous", True))
+        else None,
+        safe_num(r.get("_panel_cff"))
+        if not bool(r.get("_cf_ambiguous", True))
+        else None,
         safe_num(r.get("cfo_pat_ratio")),
     ),
     axis=1,
@@ -620,15 +686,6 @@ capital_allocation_output = ratios[
     ]
 ].copy()
 
-capital_allocation_output.to_csv(
-    OUTPUT / "capital_allocation.csv",
-    index=False,
-)
-
-print(
-    "Created:",
-    OUTPUT / "capital_allocation.csv",
-)
 
 
 # ============================================================
@@ -638,35 +695,79 @@ print(
 print("Calculating 3Y / 5Y / 10Y CAGR...")
 
 
-# Build company-year lookup tables.
-pl_lookup = (
-    pl.drop_duplicates(["company_id", "year"])
-    .set_index(["company_id", "year"])
+# Build lookups without silently resolving duplicate company-year keys.
+def build_cagr_lookup(df, value_columns, ambiguous_column=None):
+    lookup = {}
+
+    for _, source_row in df.iterrows():
+        company_id = source_row.get("company_id")
+        year_value = safe_num(source_row.get("year"))
+
+        if pd.isna(company_id) or year_value is None:
+            continue
+
+        key = (company_id, int(year_value))
+
+        # Any repeated key is ambiguous for CAGR purposes.
+        if key in lookup:
+            lookup[key] = None
+            continue
+
+        if ambiguous_column and bool(
+            source_row.get(ambiguous_column, True)
+        ):
+            lookup[key] = None
+            continue
+
+        values = {}
+        for column in value_columns:
+            values[column] = (
+                safe_num(source_row.get(column))
+                if column in source_row.index
+                else None
+            )
+
+        lookup[key] = values
+
+    return lookup
+
+
+# Apply P&L ambiguity flags to CAGR source records.
+pl_for_cagr = pl.copy()
+
+if "_pl_ambiguous" not in pl_for_cagr.columns:
+    pl_for_cagr = pl_for_cagr.merge(
+        panel_lookup[["company_id", "year", "_pl_ambiguous"]],
+        on=["company_id", "year"],
+        how="left",
+        validate="many_to_one",
+    )
+
+pl_lookup = build_cagr_lookup(
+    pl_for_cagr,
+    ["sales", "revenue", "net_profit"],
+    ambiguous_column="_pl_ambiguous",
 )
 
-ratio_lookup = (
-    ratios.drop_duplicates(["company_id", "year"])
-    .set_index(["company_id", "year"])
+ratio_lookup = build_cagr_lookup(
+    ratios,
+    ["earnings_per_share"],
+    ambiguous_column="_ratios_ambiguous",
 )
 
 
 def lookup_value(lookup, company_id, year, candidates):
     key = (company_id, year)
 
-    if key not in lookup.index:
+    if key not in lookup or lookup[key] is None:
         return None
 
-    row = lookup.loc[key]
-
-    # If duplicate rows somehow remain, take first.
-    if isinstance(row, pd.DataFrame):
-        row = row.iloc[0]
+    values = lookup[key]
 
     for column in candidates:
-        if column in row.index:
-            value = safe_num(row[column])
-            if value is not None:
-                return value
+        value = values.get(column)
+        if value is not None:
+            return value
 
     return None
 
@@ -681,53 +782,28 @@ def calculate_cagr_for_row(row, value_type, years):
     current_year = int(current_year)
     start_year = current_year - years
 
-    if value_type == "revenue":
-        current_value = lookup_value(
-            pl_lookup,
-            company_id,
-            current_year,
-            ["sales", "revenue"],
+    if value_type in ("revenue", "pat"):
+        lookup = pl_lookup
+        candidates = (
+            ["sales", "revenue"]
+            if value_type == "revenue"
+            else ["net_profit"]
         )
-
-        start_value = lookup_value(
-            pl_lookup,
-            company_id,
-            start_year,
-            ["sales", "revenue"],
-        )
-
-    elif value_type == "pat":
-        current_value = lookup_value(
-            pl_lookup,
-            company_id,
-            current_year,
-            ["net_profit"],
-        )
-
-        start_value = lookup_value(
-            pl_lookup,
-            company_id,
-            start_year,
-            ["net_profit"],
-        )
-
     elif value_type == "eps":
-        current_value = lookup_value(
-            ratio_lookup,
-            company_id,
-            current_year,
-            ["earnings_per_share"],
-        )
-
-        start_value = lookup_value(
-            ratio_lookup,
-            company_id,
-            start_year,
-            ["earnings_per_share"],
-        )
-
+        lookup = ratio_lookup
+        candidates = ["earnings_per_share"]
     else:
         return None, "INSUFFICIENT"
+
+    current_value = lookup_value(
+        lookup, company_id, current_year, candidates
+    )
+    start_value = lookup_value(
+        lookup, company_id, start_year, candidates
+    )
+
+    if current_value is None or start_value is None:
+        return None, "INSUFFICIENT_OR_AMBIGUOUS"
 
     return cagr(start_value, current_value, years)
 
@@ -738,41 +814,20 @@ for metric_name, value_type in [
     ("eps", "eps"),
 ]:
     for years in [3, 5, 10]:
+        results = [
+            calculate_cagr_for_row(row, value_type, years)
+            for _, row in ratios.iterrows()
+        ]
 
-        values = []
-        flags = []
+        ratios[f"{metric_name}_cagr_{years}yr"] = [
+            value for value, flag in results
+        ]
 
-        for _, row in ratios.iterrows():
-            value, flag = calculate_cagr_for_row(
-                row,
-                value_type,
-                years,
-            )
-
-            values.append(value)
-            flags.append(flag)
-
-        ratios[
-            f"{metric_name}_cagr_{years}yr"
-        ] = values
-
-        ratios[
-            f"{metric_name}_cagr_{years}yr_flag"
-        ] = flags
+        ratios[f"{metric_name}_cagr_{years}yr_flag"] = [
+            flag for value, flag in results
+        ]
 
 
-# Sprint-required aliases.
-ratios["revenue_cagr_5yr"] = ratios[
-    "revenue_cagr_5yr"
-]
-
-ratios["pat_cagr_5yr"] = ratios[
-    "pat_cagr_5yr"
-]
-
-ratios["eps_cagr_5yr"] = ratios[
-    "eps_cagr_5yr"
-]
 
 
 # ============================================================
@@ -781,50 +836,91 @@ ratios["eps_cagr_5yr"] = ratios[
 
 print("Calculating composite quality score...")
 
+# Exclude rows with missing or ambiguous source data from peer rankings.
+review_mask = (
+    ratios["panel_needs_review"]
+    .fillna(True)
+    .astype(bool)
+)
+eligible_mask = ~review_mask
 
 score_components = pd.DataFrame(index=ratios.index)
 
 score_components["npm"] = percentile_score(
-    ratios["engine_net_profit_margin_pct"]
+    ratios["engine_net_profit_margin_pct"],
+    eligible=eligible_mask,
 )
 
 score_components["roe"] = percentile_score(
-    ratios["engine_return_on_equity_pct"]
+    ratios["engine_return_on_equity_pct"],
+    eligible=eligible_mask,
 )
 
 score_components["roce"] = percentile_score(
-    ratios["engine_roce_pct"]
+    ratios["engine_roce_pct"],
+    eligible=eligible_mask,
 )
 
 score_components["asset_turnover"] = percentile_score(
-    ratios["engine_asset_turnover"]
+    ratios["engine_asset_turnover"],
+    eligible=eligible_mask,
 )
 
 score_components["fcf"] = percentile_score(
-    ratios["free_cash_flow_cr"]
+    ratios["free_cash_flow_cr"],
+    eligible=eligible_mask,
 )
 
 score_components["revenue_cagr"] = percentile_score(
-    ratios["revenue_cagr_5yr"]
+    ratios["revenue_cagr_5yr"],
+    eligible=eligible_mask,
 )
 
 score_components["pat_cagr"] = percentile_score(
-    ratios["pat_cagr_5yr"]
+    ratios["pat_cagr_5yr"],
+    eligible=eligible_mask,
 )
 
-# Lower D/E is better.
+# Lower debt-to-equity is better.
 score_components["debt_to_equity"] = percentile_score(
     ratios["engine_debt_to_equity"],
     inverse=True,
+    eligible=eligible_mask,
 )
 
-ratios["composite_quality_score"] = (
-    score_components.mean(
-        axis=1,
-        skipna=True,
-    )
+# Track score coverage so incomplete scores are visible.
+ratios["quality_score_components_available"] = (
+    score_components.notna().sum(axis=1)
 )
 
+ratios["quality_score_components_total"] = len(score_components.columns)
+
+MIN_SCORE_COMPONENTS = 6
+
+# Review-required rows must not receive a composite score.
+ratios.loc[review_mask, "quality_score_components_available"] = 0
+
+# Calculate the composite score only when enough components are available.
+ratios["composite_quality_score"] = score_components.mean(
+    axis=1,
+    skipna=True,
+).where(
+    (ratios["quality_score_components_available"] >= MIN_SCORE_COMPONENTS)
+    & ~review_mask
+)
+
+# Explain why a score is unavailable.
+ratios["quality_score_status"] = np.select(
+    [
+        review_mask,
+        ratios["quality_score_components_available"] < MIN_SCORE_COMPONENTS,
+    ],
+    [
+        "NEEDS_REVIEW",
+        "INSUFFICIENT_COMPONENTS",
+    ],
+    default="OK",
+)
 
 # ============================================================
 # EDGE CASE LOG
@@ -963,15 +1059,6 @@ reference_check_path = (
     OUTPUT / "companies_reference_ratio_crosscheck.csv"
 )
 
-reference_check.to_csv(
-    reference_check_path,
-    index=False,
-)
-
-print(
-    "Created:",
-    reference_check_path,
-)
 
 print("Generating edge-case log...")
 
@@ -1181,17 +1268,6 @@ log_lines.append(
     "than silently discarded."
 )
 
-with open(
-    OUTPUT / "ratio_edge_cases.log",
-    "w",
-    encoding="utf-8",
-) as f:
-    f.write("\n".join(log_lines))
-
-print(
-    "Created:",
-    OUTPUT / "ratio_edge_cases.log",
-)
 
 
 # ============================================================
@@ -1265,7 +1341,13 @@ base_columns = [
     "eps_cagr_10yr_flag",
 
     # Composite
-    "composite_quality_score",
+"composite_quality_score",
+"quality_score_components_available",
+"quality_score_components_total",
+"quality_score_status",
+
+# Data quality
+"panel_needs_review",
 ]
 
 
@@ -1276,40 +1358,128 @@ final_columns = [
 
 output_df = ratios[final_columns].copy()
 
-
 # ============================================================
-# WRITE ANALYTICAL CSV
+# PRE-WRITE VALIDATION
 # ============================================================
 
-engine_csv = ANALYTICAL / "financial_ratios_engine.csv"
+required_output_columns = [
+    "company_id",
+    "year",
+    "record_status",
+    "composite_quality_score",
+    "quality_score_components_available",
+    "quality_score_components_total",
+    "quality_score_status",
+]
 
-output_df.to_csv(
-    engine_csv,
-    index=False,
+missing_required = [
+    column for column in required_output_columns
+    if column not in output_df.columns
+]
+
+if missing_required:
+    raise ValueError(
+        f"Missing required output columns: {missing_required}"
+    )
+
+if output_df[["company_id", "year"]].isna().any().any():
+    raise ValueError("Output contains missing company_id/year keys.")
+
+if output_df.empty:
+    raise ValueError("Refusing to write an empty ratio-engine output.")
+
+
+if len(output_df) != len(ratios):
+    raise ValueError(
+        "Output row count differs from input ratio row count."
+    )
+
+# Verify that variant records have not been lost.
+input_variant_rows = (
+    ratios["record_status"].eq("VARIANT_REVIEW").sum()
 )
 
-print(
-    "Created:",
-    engine_csv,
+output_variant_rows = (
+    output_df["record_status"].eq("VARIANT_REVIEW").sum()
 )
+
+if input_variant_rows != output_variant_rows:
+    raise ValueError(
+        "Variant-preservation check failed: "
+        f"input has {input_variant_rows} variant rows, "
+        f"output has {output_variant_rows}."
+    )
+
+print(f"Variant-preservation check passed: {output_variant_rows} rows.")
+
+print("Pre-write validation passed.")
+
 
 
 # ============================================================
-# WRITE SQLITE TABLE
+# WRITE SQLITE TABLE WITH BACKUP AND VALIDATION
 # ============================================================
 
 print("\nUpdating SQLite database...")
 
-with sqlite3.connect(DB_PATH) as conn:
+import shutil
+from datetime import datetime
 
-    output_df.to_sql(
-        "financial_ratios",
-        conn,
-        if_exists="replace",
-        index=False,
+if not DB_PATH.exists():
+    raise FileNotFoundError(
+        f"Database does not exist; refusing to create a replacement: {DB_PATH}"
     )
 
-print("SQLite table created: financial_ratios")
+backup_dir = ROOT / "backups"
+backup_dir.mkdir(parents=True, exist_ok=True)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+db_backup_path = backup_dir / f"nifty100_before_ratio_engine_{timestamp}.db"
+
+# Preserve the current database before modifying it.
+shutil.copy2(DB_PATH, db_backup_path)
+print(f"Database backup created: {db_backup_path}")
+
+# Write transactionally so a failed SQL operation rolls back.
+with sqlite3.connect(DB_PATH) as conn:
+    try:
+        conn.execute("BEGIN")
+
+        output_df.to_sql(
+            "financial_ratios",
+            conn,
+            if_exists="replace",
+            index=False,
+        )
+
+        db_count = pd.read_sql_query(
+            "SELECT COUNT(*) AS row_count FROM financial_ratios",
+            conn,
+        ).iloc[0]["row_count"]
+
+        if db_count != len(output_df):
+            raise RuntimeError(
+                f"SQLite row-count mismatch: expected {len(output_df)}, "
+                f"found {db_count}."
+            )
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+with sqlite3.connect(DB_PATH) as conn:
+    db_columns = pd.read_sql_query(
+        "PRAGMA table_info(financial_ratios)",
+        conn,
+    )
+
+print("SQLite table created and row-count check passed.")
+print(f"Verified SQLite rows: {db_count:,}")
+print(f"Verified SQLite columns: {len(db_columns)}")
+print(f"Backup: {db_backup_path}")
+
 
 
 # ============================================================
@@ -1385,17 +1555,87 @@ for column in required_kpis:
             f"  {column:<35} MISSING"
         )
 
-print("\nOutput files:")
+# ============================================================
+# RESTORE OUTPUT FILES AFTER VALIDATION
+# ============================================================
+
+import os
+import tempfile
+
+engine_csv = ANALYTICAL / "financial_ratios_engine.csv"
+capital_allocation_path = OUTPUT / "capital_allocation.csv"
+reference_check_path = OUTPUT / "companies_reference_ratio_crosscheck.csv"
+edge_cases_path = OUTPUT / "ratio_edge_cases.log"
+
+# Prepare all output files before replacing existing files.
+dataframes_to_write = [
+    (engine_csv, output_df),
+    (capital_allocation_path, capital_allocation_output),
+    (reference_check_path, reference_check),
+]
+
+staged_files = []
+
+try:
+    # Stage and verify each CSV.
+    for final_path, dataframe in dataframes_to_write:
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{final_path.stem}_",
+            suffix=".tmp",
+            dir=final_path.parent,
+        )
+        os.close(fd)
+
+        temp_path = Path(temp_name)
+        dataframe.to_csv(temp_path, index=False)
+
+        staged_check = pd.read_csv(temp_path)
+
+        if len(staged_check) != len(dataframe):
+            raise RuntimeError(
+                f"Staged CSV row-count mismatch: {final_path}"
+            )
+
+        staged_files.append((temp_path, final_path))
+
+    # Stage and verify the edge-case log.
+    edge_cases_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, temp_name = tempfile.mkstemp(
+        prefix=".ratio_edge_cases_",
+        suffix=".tmp",
+        dir=edge_cases_path.parent,
+    )
+    os.close(fd)
+
+    edge_temp_path = Path(temp_name)
+    edge_temp_path.write_text(
+        "\n".join(log_lines),
+        encoding="utf-8",
+    )
+    staged_files.append((edge_temp_path, edge_cases_path))
+
+    # Publish the staged files.
+    for temp_path, final_path in staged_files:
+        os.replace(temp_path, final_path)
+
+except Exception:
+    for temp_path, _ in staged_files:
+        if temp_path.exists():
+            temp_path.unlink()
+    raise
+
+print("\nOutput files written and verified:")
 print(f"  {engine_csv}")
-print(f"  {OUTPUT / 'capital_allocation.csv'}")
-print(f"  {OUTPUT / 'ratio_edge_cases.log'}")
+print(f"  {capital_allocation_path}")
+print(f"  {reference_check_path}")
+print(f"  {edge_cases_path}")
 
 print("\nIMPORTANT:")
 print(
     "The engine does not manufacture rows to satisfy the "
     "1,100-row target."
 )
-
-print(
-    "All source/variant records are preserved transparently."
-)
+print("All source/variant records are preserved transparently.")

@@ -136,18 +136,23 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 # Dataset-specific normalisation
 # ------------------------------------------------------------
 
-def normalize_dataset(df: pd.DataFrame) -> pd.DataFrame:
+
+def normalize_dataset(
+    df: pd.DataFrame,
+    preserve_reporting_period: bool = False,
+) -> pd.DataFrame:
     """
     Apply basic normalisation to a dataset.
 
     Detects common company ID and year columns and applies
-    the project normalisation functions.
+    the project normalisation functions. Optionally preserves
+    the original reporting-period label before year conversion.
     """
     df = normalize_columns(df)
 
-    # Normalize company/ticker identifier
+    # Normalize company/ticker identifier.
     company_columns = [
-        "id",     
+        "id",
         "company_id",
         "ticker",
         "symbol",
@@ -156,13 +161,23 @@ def normalize_dataset(df: pd.DataFrame) -> pd.DataFrame:
     for column in company_columns:
         if column in df.columns:
             df[column] = df[column].apply(normalize_ticker)
-           
 
-    # Normalize year
+    # Preserve original reporting period before normalizing year.
     if "year" in df.columns:
+        if preserve_reporting_period:
+            if "reporting_period" in df.columns:
+                raise ValueError(
+                    "Source already contains a reporting_period column."
+                )
+
+            df["reporting_period"] = (
+                df["year"].astype("string").str.strip()
+            )
+
         df["year"] = df["year"].apply(normalize_year)
 
     return df
+
 
 
 # ------------------------------------------------------------
@@ -184,7 +199,18 @@ def load_all_sources() -> Dict[str, pd.DataFrame]:
         print(f"Loading: {filename}")
 
         df = load_excel(file_path)
-        df = normalize_dataset(df)
+
+        preserve_period_tables = {
+            "balancesheet",
+            "cashflow",
+            "profitandloss",
+            "financial_ratios",
+        }
+
+        df = normalize_dataset(
+            df,
+            preserve_reporting_period=dataset_name in preserve_period_tables,
+        )
 
         datasets[dataset_name] = df
 

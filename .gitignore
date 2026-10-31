@@ -46,3 +46,39 @@ htmlcov/
 data/
 output/
 results/
+
+# Local backups and temporary scripts
+backups/
+*.bak
+*.bak.*
+
+# Old analyst guide (replaced by the improved version)
+docs/Nifty100_Analyst_Guide.pdf
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Local datasets and generated outputs
+data/
+output/
+results/
+
+# Backups and temporary files
+backups/
+*.bak
+*.bak.*
+*.log
+src/nlp/parser.py.day29_backup
+
+# Python environments
+.venv/
+venv/
+
+# Distribution archives
+dist/
+
+# Local pytest reports
+reports/pytest_report.html
+reports/pytest_junit.xml

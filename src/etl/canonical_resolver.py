@@ -1,26 +1,11 @@
-"""
-Canonical record resolver for financial ETL data.
+"""Conservative, reporting-period-aware resolver for financial ETL data."""
 
-Purpose:
-    Resolve duplicate company-year records conservatively.
-
-Rules:
-    1. Exact duplicates are reduced to one record.
-    2. Variant duplicates are NOT blindly deleted.
-    3. Variant groups are classified as:
-         - RESOLVED
-         - REVIEW_REQUIRED
-    4. A variant is resolved only when a deterministic rule gives
-       sufficient evidence.
-    5. Unresolved variants are preserved in an audit table.
-"""
-
+import re
 from typing import Dict, Tuple
 
 import pandas as pd
 
 from src.etl.normaliser import normalize_ticker, normalize_year
-
 
 KEYS = ["company_id", "year"]
 
@@ -32,192 +17,171 @@ TABLES_TO_RESOLVE = [
 ]
 
 
-def normalize_keys(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Normalize company_id and year before duplicate resolution.
-    """
+def canonical_period(value):
+    """Create a matching key without changing the original period label."""
+    if pd.isna(value):
+        return "<MISSING_PERIOD>"
 
+    text = str(value).strip()
+    if not text:
+        return "<MISSING_PERIOD>"
+
+    match = re.fullmatch(
+        r"(?i)(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+        r"[- /]+(\d{2}|\d{4})",
+        text,
+    )
+    if match:
+        month = match.group(1).title()
+        year_text = match.group(2)
+        year = int(year_text)
+
+        if len(year_text) == 2:
+            year = 2000 + year if year <= 50 else 1900 + year
+
+        return f"{month} {year:04d}"
+
+    return text.casefold()
+
+
+def normalize_keys(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize company/year and derive a period-aware matching key."""
     result = df.copy()
 
-    result["company_id"] = result["company_id"].apply(normalize_ticker)
-    result["year"] = result["year"].apply(normalize_year)
+    if "company_id" in result.columns:
+        result["company_id"] = result["company_id"].apply(normalize_ticker)
+
+    if "reporting_period" not in result.columns and "year" in result.columns:
+        result["reporting_period"] = result["year"].astype("string").str.strip()
+
+    if "year" in result.columns:
+        result["year"] = result["year"].apply(normalize_year)
+
+    if "reporting_period" in result.columns:
+        result["_canonical_period_key"] = result["reporting_period"].apply(
+            canonical_period
+        )
+    elif "year" in result.columns:
+        result["_canonical_period_key"] = result["year"].apply(
+            lambda value: str(value) if pd.notna(value) else "<MISSING_PERIOD>"
+        )
+    else:
+        result["_canonical_period_key"] = "<MISSING_PERIOD>"
 
     return result
 
 
+def group_keys(df: pd.DataFrame):
+    keys = [key for key in KEYS if key in df.columns]
+    if "_canonical_period_key" in df.columns:
+        keys.append("_canonical_period_key")
+    return keys
+
+
+def comparison_columns(df: pd.DataFrame):
+    excluded = {"id", "reporting_period", "_canonical_period_key"}
+    return [column for column in df.columns if column not in excluded]
+
+
 def classify_group(group: pd.DataFrame) -> str:
-    """
-    Determine whether a duplicate group is exact or variant.
-
-    id is excluded because different technical IDs do not make
-    otherwise identical financial records different.
-    """
-
-    comparison_columns = [
-        column for column in group.columns
-        if column not in ["id"]
-    ]
-
-    if group[comparison_columns].drop_duplicates().shape[0] == 1:
+    columns = comparison_columns(group)
+    if group[columns].drop_duplicates().shape[0] == 1:
         return "EXACT_DUPLICATE"
-
     return "VARIANT_DUPLICATE"
 
 
 def remove_exact_duplicates(
     df: pd.DataFrame,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Remove exact duplicate records.
-
-    Returns:
-        cleaned dataframe
-        duplicate audit dataframe
-    """
-
+    """Remove only duplicate financial records within the same canonical period."""
     df = normalize_keys(df)
-
+    keys = group_keys(df)
     audit_rows = []
 
-    for (company_id, year), group in df.groupby(
-        KEYS,
-        dropna=False,
-        sort=True,
-    ):
+    for group_key, group in df.groupby(keys, dropna=False, sort=False):
         if len(group) <= 1:
             continue
 
-        duplicate_type = classify_group(group)
+        if not isinstance(group_key, tuple):
+            group_key = (group_key,)
 
-        audit_rows.append(
-            {
-                "company_id": company_id,
-                "year": year,
-                "row_count": len(group),
-                "duplicate_type": duplicate_type,
-            }
-        )
+        entry = dict(zip(keys, group_key))
+        entry["row_count"] = len(group)
+        entry["duplicate_type"] = classify_group(group)
+        audit_rows.append(entry)
 
     audit = pd.DataFrame(audit_rows)
 
-    # Remove only exact duplicate records.
-    comparison_columns = [
-        column for column in df.columns
-        if column != "id"
-    ]
-
-    cleaned = df.drop_duplicates(
-        subset=comparison_columns,
-        keep="first",
-    ).copy()
+    financial_columns = comparison_columns(df)
+    subset = list(dict.fromkeys(keys + financial_columns))
+    cleaned = df.drop_duplicates(subset=subset, keep="first").copy()
+    cleaned.drop(
+        columns=["_canonical_period_key"], inplace=True, errors="ignore"
+    )
 
     return cleaned, audit
 
 
-def build_variant_review(
-    df: pd.DataFrame,
-) -> pd.DataFrame:
-    """
-    Build an audit table containing unresolved variant duplicates.
-
-    No variant record is deleted here.
-    """
-
+def build_variant_review(df: pd.DataFrame) -> pd.DataFrame:
+    """List conflicting records for review; do not choose a winner automatically."""
     df = normalize_keys(df)
-
+    keys = group_keys(df)
+    columns = comparison_columns(df)
     review_rows = []
 
-    for (company_id, year), group in df.groupby(
-        KEYS,
-        dropna=False,
-        sort=True,
-    ):
-        if len(group) <= 1:
+    for group_key, group in df.groupby(keys, dropna=False, sort=False):
+        if len(group) <= 1 or classify_group(group) != "VARIANT_DUPLICATE":
             continue
 
-        duplicate_type = classify_group(group)
+        if not isinstance(group_key, tuple):
+            group_key = (group_key,)
 
-        if duplicate_type != "VARIANT_DUPLICATE":
-            continue
+        entry = dict(zip(keys, group_key))
+        differing = []
 
-        comparison_columns = [
-            column for column in group.columns
-            if column not in ["id"]
-        ]
-
-        differing_columns = []
-
-        for column in comparison_columns:
-            values = group[column].astype(str).fillna("<NA>").unique()
-
+        for column in columns:
+            values = group[column].astype("string").fillna("<NA>").unique()
             if len(values) > 1:
-                differing_columns.append(column)
+                differing.append(column)
 
-        review_rows.append(
-            {
-                "company_id": company_id,
-                "year": year,
-                "row_count": len(group),
-                "duplicate_type": duplicate_type,
-                "differing_columns": ", ".join(differing_columns),
-                "resolution": "REVIEW_REQUIRED",
-            }
-        )
+        entry.update({
+            "row_count": len(group),
+            "duplicate_type": "VARIANT_DUPLICATE",
+            "differing_columns": ", ".join(differing),
+            "resolution": "REVIEW_REQUIRED",
+        })
+        review_rows.append(entry)
 
     return pd.DataFrame(review_rows)
 
 
-def resolve_table(
-    name: str,
-    df: pd.DataFrame,
-) -> Dict[str, pd.DataFrame]:
-    """
-    Resolve one table conservatively.
-
-    Exact duplicates are removed.
-
-    Variant duplicates are retained and separately reported.
-    """
-
+def resolve_table(name: str, df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     print("\n" + "=" * 100)
     print(f"CANONICAL RESOLUTION — {name.upper()}")
     print("=" * 100)
 
-    original_rows = len(df)
-
     cleaned, audit = remove_exact_duplicates(df)
-
     variant_review = build_variant_review(cleaned)
 
-    exact_count = 0
-    variant_count = 0
+    exact_count = (
+        int((audit["duplicate_type"] == "EXACT_DUPLICATE").sum())
+        if not audit.empty else 0
+    )
+    variant_count = (
+        int((audit["duplicate_type"] == "VARIANT_DUPLICATE").sum())
+        if not audit.empty else 0
+    )
 
-    if not audit.empty:
-        exact_count = int(
-            (audit["duplicate_type"] == "EXACT_DUPLICATE").sum()
-        )
-
-        variant_count = int(
-            (audit["duplicate_type"] == "VARIANT_DUPLICATE").sum()
-        )
-
-    print(f"Original rows: {original_rows}")
+    print(f"Original rows: {len(df)}")
     print(f"Rows after exact duplicate removal: {len(cleaned)}")
     print(f"Exact duplicate groups: {exact_count}")
     print(f"Variant duplicate groups: {variant_count}")
 
     if not variant_review.empty:
         print("\nVARIANT GROUPS REQUIRING REVIEW:")
-
-        print(
-            variant_review.head(20).to_string(index=False)
-        )
-
+        print(variant_review.head(20).to_string(index=False))
         if len(variant_review) > 20:
-            print(
-                f"\n... showing first 20 of "
-                f"{len(variant_review)} variant groups ..."
-            )
+            print(f"... first 20 of {len(variant_review)} groups shown ...")
     else:
         print("\nNo unresolved variant duplicates.")
 
@@ -231,21 +195,12 @@ def resolve_table(
 def resolve_all(
     data: Dict[str, pd.DataFrame],
 ) -> Dict[str, Dict[str, pd.DataFrame]]:
-    """
-    Resolve all financial tables.
-    """
-
     results = {}
 
     for table_name in TABLES_TO_RESOLVE:
-
         if table_name not in data:
             print(f"\nTable not found: {table_name}")
             continue
-
-        results[table_name] = resolve_table(
-            table_name,
-            data[table_name],
-        )
+        results[table_name] = resolve_table(table_name, data[table_name])
 
     return results

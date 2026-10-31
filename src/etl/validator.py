@@ -79,96 +79,146 @@ def dq02_company_year_uniqueness(
     datasets: Dict[str, pd.DataFrame],
     failures: List[dict],
 ) -> None:
-    """Check company/year uniqueness.
+    """Check financial-record uniqueness by canonical reporting period.
 
-    Known ETL-reviewed variants are WARNING.
-    Unexpected duplicates are CRITICAL.
+    Financial statements use company_id + canonical reporting period.
+    Market capitalization retains company_id + year uniqueness.
+    Known reviewed variants are warnings, not critical failures.
     """
+    import os
+    from src.etl.canonical_resolver import canonical_period
 
-    applicable_tables = {
+    financial_tables = {
         "profitandloss",
         "balancesheet",
         "cashflow",
         "financial_ratios",
-        "market_cap",
     }
+    applicable_tables = financial_tables | {"market_cap"}
 
+    review_dir = Path(
+        os.environ.get("NIFTY100_REVIEW_DIR", "data/processed/review")
+    )
     review_files = {
-        "balancesheet": "data/processed/review/balancesheet_variant_review.csv",
-        "cashflow": "data/processed/review/cashflow_variant_review.csv",
-        "financial_ratios": "data/processed/review/financial_ratios_variant_review.csv",
-        "profitandloss": "data/processed/review/profitandloss_variant_review.csv",
+        table: review_dir / f"{table}_variant_review.csv"
+        for table in financial_tables
     }
 
     known_variants = {}
-
-    # Load known variant company/year combinations
     for table, path in review_files.items():
         try:
             review_df = pd.read_csv(path)
-
         except (pd.errors.EmptyDataError, FileNotFoundError):
             known_variants[table] = set()
             continue
 
-        if {"company_id", "year"}.issubset(review_df.columns):
-            known_variants[table] = set(
-                zip(
-                    review_df["company_id"].astype(str).str.strip(),
-                    review_df["year"].astype(str).str.strip(),
-                )
-            )
+        if "company_id" not in review_df.columns:
+            known_variants[table] = set()
+            continue
+
+        if "canonical_reporting_period" in review_df.columns:
+            period_column = "canonical_reporting_period"
+        elif "reporting_period" in review_df.columns:
+            period_column = "reporting_period"
+        elif "year" in review_df.columns:
+            period_column = "year"
         else:
             known_variants[table] = set()
+            continue
 
-    # Check actual datasets
+        known_variants[table] = {
+            (
+                str(row["company_id"]).strip().upper(),
+                canonical_period(row[period_column]),
+            )
+            for _, row in review_df.iterrows()
+            if pd.notna(row["company_id"])
+        }
+
     for table in applicable_tables:
         if table not in datasets:
             continue
 
         df = datasets[table]
-
-        if not {"company_id", "year"}.issubset(df.columns):
+        if "company_id" not in df.columns:
             continue
 
-        duplicate_mask = df.duplicated(
-            subset=["company_id", "year"],
-            keep=False,
-        )
-
-        duplicates = df.loc[
-            duplicate_mask,
-            ["company_id", "year"],
-        ].drop_duplicates()
-
-        for _, row in duplicates.iterrows():
-
-            key = (
-                str(row["company_id"]).strip(),
-                str(row["year"]).strip(),
+        if table in financial_tables:
+            period_column = (
+                "reporting_period"
+                if "reporting_period" in df.columns
+                else "year" if "year" in df.columns else None
             )
+            if period_column is None:
+                continue
 
-            if key in known_variants.get(table, set()):
-                severity = "WARNING"
-                message = (
-                    "Known variant duplicate retained by ETL; "
-                    "manual/source review required"
-                )
-            else:
-                severity = "CRITICAL"
-                message = (
-                    "Unexpected duplicate (company_id, year) combination"
-                )
-
-            add_failure(
-                failures,
-                "DQ-02",
-                table,
-                severity,
-                message,
-                row["company_id"],
-                row["year"],
+            keys = pd.DataFrame(index=df.index)
+            keys["company_id"] = (
+                df["company_id"].astype("string").str.strip().str.upper()
             )
+            keys["_period_key"] = df[period_column].apply(canonical_period)
+            duplicate_mask = keys.duplicated(
+                subset=["company_id", "_period_key"], keep=False
+            )
+            duplicate_keys = keys.loc[
+                duplicate_mask, ["company_id", "_period_key"]
+            ].drop_duplicates()
+
+            for _, row in duplicate_keys.iterrows():
+                key = (row["company_id"], row["_period_key"])
+                known = key in known_variants.get(table, set())
+                period_label = row["_period_key"]
+                if known:
+                    severity = "WARNING"
+                    message = (
+                        f"Known variant duplicate retained by ETL for "
+                        f"reporting period {period_label}; manual/source review required"
+                    )
+                else:
+                    severity = "CRITICAL"
+                    message = (
+                        f"Unexpected duplicate (company_id, reporting period) "
+                        f"combination: {period_label}"
+                    )
+
+                matching_rows = df.loc[
+                    (keys["company_id"] == row["company_id"])
+                    & (keys["_period_key"] == row["_period_key"])
+                ]
+                year = (
+                    matching_rows.iloc[0].get("year")
+                    if "year" in matching_rows.columns else None
+                )
+                add_failure(
+                    failures, "DQ-02", table, severity, message,
+                    row["company_id"], year,
+                )
+        else:
+            if "year" not in df.columns:
+                continue
+
+            keys = pd.DataFrame(index=df.index)
+            keys["company_id"] = (
+                df["company_id"].astype("string").str.strip().str.upper()
+            )
+            keys["year"] = df["year"].astype("string").str.strip()
+            duplicate_mask = keys.duplicated(
+                subset=["company_id", "year"], keep=False
+            )
+            duplicates = keys.loc[
+                duplicate_mask, ["company_id", "year"]
+            ].drop_duplicates()
+
+            for _, row in duplicates.iterrows():
+                add_failure(
+                    failures,
+                    "DQ-02",
+                    table,
+                    "CRITICAL",
+                    "Unexpected duplicate (company_id, year) combination",
+                    row["company_id"],
+                    row["year"],
+                )
 
 # -------------------------------------------------------------------
 # DQ-03 — Foreign-key integrity
@@ -859,57 +909,38 @@ def main() -> None:
 
     datasets = load_all_sources()
 
-datasets = load_all_sources()
-
-# Use production-cleaned financial datasets for validation
-for table in [
-    "profitandloss",
-    "cashflow",
-    "balancesheet",
-    "financial_ratios",
-]:
-    cleaned_file = Path("data/processed") / f"{table}_cleaned.csv"
-
-    if cleaned_file.exists():
-        datasets[table] = pd.read_csv(cleaned_file)
+    # Use production-cleaned financial datasets when available.
+    for table in [
+        "profitandloss",
+        "cashflow",
+        "balancesheet",
+        "financial_ratios",
+    ]:
+        cleaned_file = Path("data/processed") / f"{table}_cleaned.csv"
+        if cleaned_file.exists():
+            datasets[table] = pd.read_csv(cleaned_file)
 
     failures = validate_all(datasets)
+    failures.to_csv(FAILURE_FILE, index=False)
 
-    failures.to_csv(
-        FAILURE_FILE,
-        index=False,
-    )
-
-    print("\n" + "=" * 70)
+    print("\\n" + "=" * 70)
     print("VALIDATION COMPLETE")
     print("=" * 70)
-
     print(f"Total DQ failures: {len(failures):,}")
 
     if failures.empty:
         print("CRITICAL failures: 0")
         print("WARNING failures: 0")
-        print("\nAll 16 DQ rules passed.")
+        print("\\nAll 16 DQ rules passed.")
     else:
-        critical = int(
-            (failures["severity"] == "CRITICAL").sum()
-        )
-        warning = int(
-            (failures["severity"] == "WARNING").sum()
-        )
+        critical = int((failures["severity"] == "CRITICAL").sum())
+        warning = int((failures["severity"] == "WARNING").sum())
 
         print(f"CRITICAL failures: {critical:,}")
         print(f"WARNING failures: {warning:,}")
-
-        print("\nFailures by rule:")
-        print(
-            failures["rule_id"]
-            .value_counts()
-            .sort_index()
-            .to_string()
-        )
-
-        print(f"\nReport saved to: {FAILURE_FILE}")
+        print("\\nFailures by rule:")
+        print(failures["rule_id"].value_counts().sort_index().to_string())
+        print(f"\\nReport saved to: {FAILURE_FILE}")
 
 
 if __name__ == "__main__":

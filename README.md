@@ -1,220 +1,254 @@
-# Nifty 100 Stock Analytics & ETL Pipeline
+# Nifty 100 Stock Analytics & Financial Data Engineering Platform
 
-An end-to-end financial data engineering and analytics project that processes Nifty 100 company data, builds an analytical SQLite database, calculates financial metrics, evaluates company performance, and presents insights through an interactive Streamlit dashboard.
+An end-to-end Python-based financial data engineering and analytics project that combines ETL automation, financial statement analysis, stock performance evaluation, company screening, valuation analytics, interactive dashboards and REST API development.
+
+The platform processes company-level financial and market datasets, performs data cleaning and validation, calculates financial metrics, generates analytical reports, and exposes selected insights through a Streamlit dashboard and FastAPI.
+
+> **Project purpose:** Educational, analytical and software engineering demonstration. This project is not a live trading platform or a source of investment advice.
+
+---
 
 ## 1. Project Overview
 
-This project combines data engineering, financial analytics, stock performance analysis, and interactive visualization.
+The Nifty 100 Analytics project is designed to transform financial datasets into structured, reusable and interpretable analytical outputs.
 
-The pipeline transforms raw Excel datasets into cleaned and validated financial tables, integrates company-level and yearly records, calculates derived metrics, and stores analytical outputs in SQLite.
+It brings together:
 
-The Streamlit dashboard provides company profiles, stock screening, peer comparison, historical trends, sector analysis, capital allocation analysis, annual report discovery, and valuation analysis.
+- Financial data engineering and ETL pipelines.
+- Data cleaning, normalization and validation.
+- Financial ratios and derived metric calculations.
+- Company performance scorecards.
+- Historical stock return analysis.
+- Stock screening and peer comparison.
+- Sector and valuation analysis.
+- Capital allocation and cash flow intelligence.
+- Interactive Streamlit dashboard.
+- FastAPI-based read-only REST API.
+- Machine learning-based company clustering.
+- Automated testing and performance benchmarking.
+- PDF, Excel, CSV and visualization reports.
 
-### Key capabilities
+The analytical universe covers **92 companies across 10 sectors** in the prepared project outputs.
 
-- ETL pipeline for multiple financial datasets
-- Duplicate detection, classification, and variant resolution
-- Data quality validation and audit reports
-- Financial data integration and derived metric calculation
-- Company summaries and performance scorecards
-- Historical stock returns and annual performance analysis
-- Multi-factor stock screener
-- Peer comparison and sector analysis
-- Financial trend and capital allocation analysis
-- P/E versus sector median valuation screening
-- FCF yield and dividend yield analysis
-- Excel and CSV report generation
-- Interactive Streamlit dashboard
-- Automated tests using pytest
+## 2. Key Features
 
-## 2. Project Objectives
+### Data Engineering and ETL
 
-1. Build a reproducible financial ETL pipeline.
-2. Detect and document duplicate and variant financial records.
-3. Validate financial and stock-price datasets.
-4. Integrate financial statements and market data.
-5. Calculate financial ratios and derived metrics.
-6. Analyze company fundamentals and historical stock performance.
-7. Compare companies with peers and sector benchmarks.
-8. Build company performance rankings and screening criteria.
-9. Generate valuation screening signals.
-10. Store analytical datasets in SQLite.
-11. Present results through an interactive dashboard.
-12. Maintain automated tests and data-quality documentation.
+- Ingestion of multiple financial datasets.
+- Data normalization and cleaning.
+- Duplicate detection and canonical company resolution.
+- Financial data validation and quality checks.
+- Integration of company-level and annual financial records.
+- Construction of financial panels and analytical tables.
+- SQLite database generation and structured storage.
+
+### Financial Analytics
+
+- Financial ratio calculations.
+- Derived financial metrics.
+- Company performance scorecards.
+- Historical stock returns and annual performance.
+- Company-level financial trend analysis.
+- Peer benchmarking and sector comparisons.
+- Valuation screening using P/E and sector medians.
+- Free cash flow yield and dividend yield analysis.
+- Cash flow and capital allocation analysis.
+
+### Interactive Dashboard
+
+The Streamlit dashboard provides an interactive interface for exploring company and sector-level insights.
+
+Major analytical areas include:
+
+- Home and overview.
+- Company profiles.
+- Stock screening.
+- Peer comparison.
+- Financial trend analysis.
+- Sector analysis.
+- Capital allocation.
+- Annual report discovery.
+- Valuation analysis.
+
+### REST API
+
+A FastAPI application provides read-only access to analytical information.
+
+- REST endpoints for company and sector analytics.
+- Structured JSON responses.
+- Interactive API documentation.
+- Exported OpenAPI schema.
+- API endpoint tests and performance benchmarks.
+
+API documentation is available at `/docs` when the application is running.
+
+### Sprint 6 Analytics
+
+The final sprint extends the platform with:
+
+- Company clustering.
+- K-Means-based analytical segmentation.
+- StandardScaler-based feature scaling.
+- Cluster profiles and labels.
+- Outlier analysis.
+- Portfolio statistics.
+- Correlation heatmap.
+- Elbow plot.
+- Company tearsheets.
+- Sector reports.
+- Portfolio summary.
+- Acceptance checklist and performance reports.
 
 ## 3. Technology Stack
 
-| Area | Technology |
+| Area | Technologies |
 |---|---|
-| Programming language | Python |
+| Programming | Python |
 | Data processing | Pandas, NumPy |
 | Database | SQLite |
-| Interactive dashboard | Streamlit |
-| Visualizations | Streamlit charts and Matplotlib-based project outputs |
-| Excel processing | openpyxl, Pandas |
+| Dashboard | Streamlit |
+| API | FastAPI, Uvicorn |
+| Machine learning | Scikit-learn |
+| Visualization | Matplotlib |
+| Excel processing | Pandas, openpyxl |
 | Configuration | YAML |
 | Testing | pytest |
-| Source data | Excel workbooks and CSV datasets |
+| Version control | Git, GitHub |
 
-The installed packages and dependencies are defined in `requirements.txt`.
+The Python dependencies are maintained in `requirements.txt`.
 
-## 4. Data Sources
+## 4. System Architecture
 
-The project uses 12 raw Excel datasets supplied with the project:
-
-- Analysis
-- Balance Sheet
-- Cash Flow
-- Companies
-- Documents
-- Profit and Loss
-- Pros and Cons
-- Financial Ratios
-- Market Capitalization
-- Peer Groups
-- Sectors
-- Stock Prices
-
-Raw files are stored in `data/raw/`.
-
-Processed financial datasets and the primary SQLite database are stored in `data/processed/`.
-
-The market capitalization workbook includes yearly valuation fields such as:
-
-- Market capitalization
-- Enterprise value
-- Price-to-earnings ratio (P/E)
-- Price-to-book ratio (P/B)
-- EV/EBITDA
-- Dividend yield
-
-The available valuation dataset covers 92 companies for each year from 2019 through 2024.
-
-**Data note:** The outputs depend on the supplied datasets. Data availability, identifier consistency, duplicate records, and unusual financial values must be reviewed before interpreting results as investment-grade information.
-
-## 5. ETL Architecture
-
-The project follows this general workflow:
+The project follows a modular data engineering and analytics architecture.
 
 ```text
-Raw Excel Datasets
-        |
-        v
-Data Ingestion and Normalization
-        |
-        v
-Duplicate Detection and Resolution
-        |
-        v
-Data Quality Validation
-        |
-        v
-Clean Financial Tables
-        |
-        v
-Financial Panel and Derived Metrics
-        |
-        v
-Company Summary and Stock Returns
-        |
-        v
-Company Performance Scorecard
-        |
-        v
-SQLite Analytical Database
-        |
-        +--------------------------+
-        |                          |
-        v                          v
-Financial Analytics         Valuation Analytics
-        |                          |
-        +-------------+------------+
-                      |
-                      v
-             Streamlit Dashboard
-                      |
-                      v
-          Excel and CSV Exports
+             FINANCIAL DATASETS
+                     |
+                     v
+              DATA INGESTION
+                     |
+                     v
+           NORMALIZATION & CLEANING
+                     |
+                     v
+          DUPLICATE DETECTION AND
+             CANONICAL RESOLUTION
+                     |
+                     v
+             DATA VALIDATION
+                     |
+                     v
+           CLEAN FINANCIAL TABLES
+                     |
+                     v
+          FINANCIAL PANEL BUILDING
+                     |
+                     v
+           DERIVED METRIC ENGINE
+                     |
+                     v
+          COMPANY SUMMARY & RETURNS
+                     |
+                     v
+             SQLITE DATABASE
+                     |
+          +----------+----------+
+          |          |          |
+          v          v          v
+      FINANCIAL   VALUATION   SPRINT 6
+      ANALYTICS   ANALYTICS   ANALYTICS
+          |          |          |
+          +----------+----------+
+                     |
+             +-------+-------+
+             |               |
+             v               v
+        STREAMLIT         FASTAPI
+        DASHBOARD       REST INTERFACE
+             |               |
+             v               v
+       VISUAL REPORTS    JSON RESPONSES
+             |
+             v
+       PDF / EXCEL / CSV
 ```
 
-The ETL modules are located in `src/etl/`.
+## 5. Project Structure
 
-## 6. Project Structure
+The public repository contains source code, configuration, tests and selected documentation and reports. Local datasets, databases and generated working outputs are excluded.
 
 ```text
 nifty100/
+│
 ├── config/
 │   └── screener_config.yaml
-├── data/
-│   ├── raw/
-│   ├── processed/
-│   │   ├── nifty100.db
-│   │   ├── *_cleaned.csv
-│   │   └── analytical/
-│   ├── audit/
-│   └── review/
-├── output/
-│   ├── valuation_summary.xlsx
-│   ├── valuation_flags.csv
-│   └── other analytical exports
-├── pages/
-│   ├── 01_home.py
-│   ├── 02_profile.py
-│   ├── 03_screener.py
-│   ├── 04_peers.py
-│   ├── 05_trends.py
-│   ├── 06_sectors.py
-│   ├── 07_capital.py
-│   ├── 08_reports.py
-│   └── 09_valuation.py
+│
+├── docs/
+│   ├── analyst_guide.pdf
+│   ├── acceptance_checklist.pdf
+│   └── openapi.json
+│
+├── notebooks/
+│   └── exploratory_queries.sql
+│
 ├── reports/
-│   └── radar_charts/
-├── results/
-│   └── charts/
+│   ├── performance/
+│   ├── portfolio/
+│   ├── sector/
+│   ├── tearsheets/
+│   ├── correlation_heatmap.png
+│   └── elbow_plot.png
+│
 ├── src/
 │   ├── analytics/
-│   │   └── valuation.py
+│   ├── api/
+│   │   └── main.py
 │   ├── dashboard/
-│   │   ├── app.py
-│   │   └── utils/
+│   │   └── app.py
 │   ├── etl/
-│   └── screener/
+│   ├── nlp/
+│   └── validation/
+│
 ├── tests/
-├── inspect_sources.py
-├── sql_analysis.sql
+│   ├── analytics/
+│   ├── etl/
+│   ├── performance/
+│   └── API and integration tests
+│
+├── .gitignore
+├── pytest.ini
 ├── requirements.txt
-├── Makefile
 └── README.md
 ```
 
-Some generated files and optional audit directories may vary as the pipeline is run.
+**Note:** The local development environment contains additional directories and data files that are intentionally not published.
 
-## 7. Installation and Setup
+## 6. Installation and Setup
 
 ### Prerequisites
 
-- Python 3.11 or later recommended, subject to dependency compatibility
-- Git
-- macOS, Linux, or Windows
-- The supplied project datasets
+- Python 3.11 or later, subject to dependency compatibility.
+- Git.
+- pip.
+- The required project input datasets for full pipeline execution.
 
-The current development environment has been tested with Python 3.14.
+The development environment was tested using Python 3.14.
 
 ### Step 1: Clone the repository
 
 ```bash
-git clone <YOUR_GITHUB_REPOSITORY_URL>
+git clone https://github.com/rupeshstack01/nifty100.git
+
 cd nifty100
 ```
 
-Replace the placeholder with your actual repository URL.
-
 ### Step 2: Create a virtual environment
 
-On macOS or Linux:
+macOS / Linux:
 
 ```bash
 python3 -m venv .venv
+
 source .venv/bin/activate
 ```
 
@@ -222,203 +256,274 @@ source .venv/bin/activate
 
 ```bash
 python -m pip install --upgrade pip
+
 python -m pip install -r requirements.txt
 ```
 
-If you use the existing virtual environment on macOS, commands can be run with `./.venv/bin/python` without activating it.
+### Step 4: Prepare input data
 
-### Step 4: Verify the project
+The raw financial datasets and SQLite database are not included in this public repository.
 
-```bash
-python -m pytest -q
-```
+To run the complete data pipeline, obtain the authorized project input datasets and place them in the expected local data directories. Follow the Analyst Guide for the required data preparation and execution sequence.
 
-## 8. Running the Dashboard
+Do not commit private datasets, credentials or local database files.
 
-Start the Streamlit application from the project root:
+## 7. Running the Applications
+
+### Streamlit Dashboard
+
+From the project root:
 
 ```bash
 python -m streamlit run src/dashboard/app.py
 ```
 
-Streamlit prints a local URL in the terminal, usually:
+Open the local URL printed by Streamlit, normally:
 
 ```text
 http://localhost:8501
 ```
 
-The port may differ if another Streamlit application is already running.
+The dashboard requires the relevant prepared analytical data and supporting local files.
 
-### Dashboard pages
+### FastAPI Application
 
-| Page | Purpose |
-|---|---|
-| Home | High-level company and sector metrics |
-| Company Profile | Company-level financial information |
-| Stock Screener | Filter and rank companies |
-| Peer Comparison | Compare companies with peer groups |
-| Trend Analysis | Explore historical financial trends |
-| Sector Analysis | Compare sector-level performance |
-| Capital Allocation | Examine cash flow and capital allocation metrics |
-| Annual Reports | Browse available annual report links |
-| Valuation Analysis | Compare valuation multiples and yields |
-
-## 9. Valuation Analysis
-
-The valuation engine is implemented in `src/analytics/valuation.py`.
-
-### Generate valuation reports
-
-Run:
+Start the API:
 
 ```bash
-python src/analytics/valuation.py
+python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 ```
 
-The script reads the market capitalization workbook and financial data from the SQLite database.
-
-### Valuation metrics
-
-**FCF yield**
-
-FCF yield compares free cash flow with market capitalization:
-
-[
-\text{FCF Yield (\%)} =
-\frac{\text{Free Cash Flow}}{\text{Market Capitalization}}
-\times 100
-]
-
-Both inputs must use consistent units.
-
-**P/E relative to sector median**
-
-[
-\text{Relative P/E} =
-\frac{\text{Company P/E}}{\text{Sector Median P/E}}
-]
-
-The screening classifications currently use these rules:
-
-| Classification | Rule |
-|---|---|
-| Discount | Positive P/E below 70% of sector median |
-| Fair | P/E from 70% through 150% of sector median |
-| Caution | P/E above 150% of sector median |
-| Insufficient Data | Invalid P/E or unavailable valid sector median |
-
-These labels are relative valuation screening signals. They do not establish intrinsic value or constitute investment recommendations.
-
-### Generated reports
-
-The valuation engine writes:
+Open the interactive API documentation:
 
 ```text
-output/
-├── valuation_summary.xlsx
-└── valuation_flags.csv
+http://127.0.0.1:8000/docs
 ```
 
-The Excel workbook contains the full valuation summary and a separate worksheet for Discount and Caution companies. The CSV contains companies assigned those two flags.
+The exported API schema is available in:
 
-The Streamlit valuation page reads the generated Excel workbook. Regenerate the report after changing the source data or valuation calculations.
+```text
+docs/openapi.json
+```
 
-### Data-quality considerations
+The API uses the project's prepared analytical data. A fresh clone may require local data preparation before all endpoints can return project results.
 
-- Missing FCF must not be interpreted as zero FCF.
-- The report records the year associated with the FCF used for the yield calculation.
-- FCF year and valuation year may differ.
-- Unusually large financial values should be checked against source records.
-- Sector medians depend on the companies and valid P/E observations available in each sector.
-- The quality of valuation conclusions depends on the reliability of the supplied financial data.
+## 8. Financial Analytics
 
-## 10. Testing and Validation
+The project implements multiple layers of financial analysis.
 
-The project includes automated tests under `tests/`.
+### Company Performance
 
-Run the full suite:
+- Company-level financial summaries.
+- Historical performance.
+- Annual stock returns.
+- Financial ratio analysis.
+- Derived financial indicators.
+- Company scorecards.
+
+### Peer and Sector Analysis
+
+- Peer group comparisons.
+- Sector-level benchmarking.
+- Company ranking and screening.
+- Sector performance summaries.
+
+### Valuation Analysis
+
+The valuation analysis includes:
+
+- Price-to-Earnings (P/E).
+- Price-to-Book (P/B).
+- Enterprise Value (EV).
+- EV/EBITDA.
+- Dividend yield.
+- Free Cash Flow (FCF) yield.
+- Relative P/E against sector median.
+
+Example formulas:
+
+**Free Cash Flow Yield**
+
+\[
+FCF\ Yield = \frac{Free\ Cash\ Flow}{Market\ Capitalization}\times100
+\]
+
+**Relative P/E**
+
+\[
+Relative\ P/E = \frac{Company\ P/E}{Sector\ Median\ P/E}
+\]
+
+Valuation classifications are screening indicators based on the available data and configured thresholds. They do not establish intrinsic value.
+
+### Cash Flow and Capital Allocation
+
+The project also analyzes financial trends and cash flow-related indicators to support company-level financial evaluation.
+
+## 9. Sprint 6: Clustering and Advanced Analytics
+
+Sprint 6 adds machine learning and advanced reporting capabilities.
+
+### K-Means Clustering
+
+The clustering workflow uses:
+
+- Feature preparation.
+- StandardScaler normalization.
+- K-Means clustering.
+- Five selected clusters.
+- Reproducible random state (`42`).
+- Cluster labels and cluster profiles.
+
+The clustering outputs support descriptive segmentation of companies based on selected analytical features.
+
+### Generated Analytical Outputs
+
+Selected outputs include:
+
+- Cluster labels.
+- Cluster profiles.
+- Outlier reports.
+- Portfolio statistics.
+- Correlation heatmap.
+- Elbow plot.
+- Company tearsheets.
+- Sector reports.
+- Portfolio summary.
+
+**Interpretation note:** Cluster labels are descriptive analytical groupings, not buy/sell recommendations. Very small clusters require additional stability and sensitivity analysis.
+
+## 10. Database Design
+
+The local SQLite analytical database is:
+
+```text
+data/processed/nifty100.db
+```
+
+It contains 10 principal analytical tables:
+
+| Table | Rows |
+|---|---:|
+| annual_stock_returns | 460 |
+| company_scorecard | 90 |
+| company_summary | 92 |
+| derived_metrics | 973 |
+| financial_panel | 973 |
+| financial_ratios | 1,076 |
+| peer_percentiles | 816 |
+| sectors | 92 |
+| stock_prices | 5,520 |
+| stock_returns | 5,520 |
+
+The database is excluded from GitHub to keep the public repository focused on code and documentation.
+
+## 11. Testing and Validation
+
+Automated testing is maintained using pytest.
+
+Run the test suite:
 
 ```bash
 python -m pytest -q
 ```
 
-For more detailed output:
+Run with verbose output:
 
 ```bash
 python -m pytest -v
 ```
 
-The current development run completed with **63 passing tests**.
+### Latest recorded development results
 
-Automated tests validate the covered code paths. They do not, by themselves, guarantee the correctness of every financial source record, dashboard interaction, or valuation conclusion.
+| Test / Validation | Result |
+|---|---|
+| Full pytest suite | 134 passed |
+| Warnings | 2 |
+| API benchmark endpoints | 16 of 16 passed |
+| API benchmark errors | 0 |
+| Sector detail regression tests | 12 passed |
+| Acceptance gates | 19 of 20 passed |
+| Reviewer sign-off | Pending |
 
-## 11. SQL Analysis and Outputs
+The API benchmark used sequential in-process FastAPI TestClient requests with warm-up and measured iterations. It is not a production network or concurrent load test.
 
-SQL analysis is maintained in:
+The acceptance checklist intentionally leaves reviewer sign-off pending until an actual reviewer approves the project.
 
-```text
-sql_analysis.sql
-```
+## 12. Documentation and Reports
 
-Generated analytical outputs may include:
+The repository includes selected project documentation and generated reports:
 
-- Company performance scorecards
-- Annual stock returns
-- Peer comparison reports
-- Screener results
-- Capital allocation exports
-- Valuation summaries
-- Data-quality and duplicate-resolution reports
-- Company radar charts and other visualizations
+| File / Directory | Description |
+|---|---|
+| `docs/analyst_guide.pdf` | Project architecture, analytical methods and operating guide |
+| `docs/acceptance_checklist.pdf` | Sprint acceptance and validation status |
+| `docs/openapi.json` | API specification |
+| `reports/sector/` | Sector-level reports |
+| `reports/tearsheets/` | Company-level analytical reports |
+| `reports/portfolio/` | Portfolio summary |
+| `reports/performance/` | API benchmark results |
+| `reports/elbow_plot.png` | Clustering evaluation visualization |
+| `reports/correlation_heatmap.png` | Feature correlation visualization |
 
-Generated files are stored under `output/`, `results/`, and `reports/`.
+## 13. Data and Project Limitations
 
-## 12. Reproducibility
+Please consider the following before interpreting results:
 
-For a repeatable workflow:
+1. This is an educational and analytical prototype, not a live financial data service.
+2. Raw input datasets and the SQLite database are excluded from the public repository.
+3. Some prepared market-price inputs are simulated and must not be interpreted as verified live market prices.
+4. Financial data availability and quality depend on the supplied source datasets.
+5. Company identifiers and financial reporting periods may require reconciliation.
+6. Missing or unusual financial values can affect calculated metrics.
+7. Historical performance does not guarantee future returns.
+8. Machine learning clusters are descriptive, not investment signals.
+9. Valuation classifications are screening outputs, not investment recommendations.
+10. API benchmark results are local test measurements, not production performance guarantees.
 
-1. Preserve the original input files in `data/raw/`.
-2. Use the project's virtual environment and `requirements.txt`.
-3. Run the required ETL modules in the intended pipeline order.
-4. Validate the resulting database and financial tables.
-5. Run the automated tests.
-6. Generate the valuation reports.
-7. Launch the Streamlit dashboard.
-8. Record any unresolved data-quality issues.
-
-Do not rebuild or overwrite analytical data until the required ETL sequence and its dependencies have been confirmed.
-
-## 13. Limitations
-
-- The project analyzes supplied datasets and is not a live market-data platform.
-- Some financial records or metrics may be missing or inconsistent.
-- Company identifiers may differ between source datasets.
-- Annual report links originate from the supplied workbook and may require independent verification.
-- Historical financial and stock performance does not guarantee future results.
-- Valuation flags are screening outputs, not personalized financial advice.
-- Financial figures should be independently verified before being used for investment decisions.
+Always independently verify financial information before making investment decisions.
 
 ## 14. Future Improvements
 
-Potential improvements include:
+Potential areas for further development:
 
-- Stronger company identifier reconciliation
-- Additional validation for unusual financial values
-- More comprehensive data-quality reporting
-- Automated dashboard integration tests
-- Improved valuation metrics and configurable screening thresholds
-- Reproducible end-to-end ETL orchestration
-- Automated documentation and deployment
-- Additional market-data validation and refresh mechanisms
+- Automated end-to-end ETL orchestration.
+- Additional financial data validation.
+- Improved company identifier reconciliation.
+- More comprehensive dashboard integration testing.
+- Sensitivity analysis for clustering.
+- Live, licensed market-data integration.
+- API authentication and deployment hardening.
+- Automated report generation and scheduled refreshes.
+- Production deployment and monitoring.
 
-## 15. Author and Project Information
+## 15. Running the Project: Quick Reference
 
-**Project:** Nifty 100 Stock Analytics & ETL Pipeline
+| Task | Command |
+|---|---|
+| Install dependencies | `python -m pip install -r requirements.txt` |
+| Run tests | `python -m pytest -q` |
+| Launch dashboard | `python -m streamlit run src/dashboard/app.py` |
+| Launch API | `python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000` |
+| Run clustering | `python -m src.analytics.clustering_submission` |
+| Generate Sprint 6 reports | `python -m src.analytics.build_sprint6_reports` |
 
-**Repository:** Add your GitHub repository URL.
-
-**Author:** Add your preferred name and contact information.
+Some commands require local datasets or a prepared database that are not included in the public repository.
 
 ---
 
-*This project is intended for educational, analytical, and software engineering demonstration purposes. Verify all financial information independently before relying on it for investment decisions.*
+## Project Information
+
+**Project:** Nifty 100 Stock Analytics & Financial Data Engineering Platform
+
+**Repository:** https://github.com/rupeshstack01/nifty100
+
+**Primary language:** Python
+
+**Purpose:** Financial data engineering, analytics, visualization and API development.
+
+**License:** No license has been specified. All rights reserved unless a license is added to the repository.
+
+---
+
+*Built as a hands-on project demonstrating data engineering, financial analytics, machine learning, API development, software testing and technical documentation.*
